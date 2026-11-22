@@ -1,0 +1,4 @@
+{
+  "ydd": "C:/path/to/your/donor_ped.ydd",
+  "note": "Copy this file to donor/donor.json (gitignored) and point 'ydd' at a skinned ped drawable dictionary exported from YOUR OWN GTA V install via CodeWalker. The donor is never shipped or copied by the pipeline - it is referenced in place. See SETUP.md."
+}

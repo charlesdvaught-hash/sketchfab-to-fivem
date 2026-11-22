@@ -1,0 +1,35 @@
+# Pipeline outputs — converted assets carry per-source licenses;
+# publish the tooling, never the products.
+# Credentials live under build/ too — NEVER committable:
+#   build/sketchfab_token.json  (pasted API token)
+#   build/sketchfab_oauth.json  (OAuth client id + access token)
+build/
+build/sketchfab_token.json
+build/sketchfab_oauth.json
+work/
+quarantine/
+
+# Drop zone for source assets (downloaded models live here, never commit)
+inbox/*
+!inbox/.gitkeep
+
+# Generated FXServer test env (junctioned resources + local config)
+testserver/
+
+# Pinned binaries (texconv etc.) — download per SETUP.md, not committed
+bin/*
+!bin/.gitkeep
+
+# Auto-rig donor assets — game-IP derived, referenced in place, never committed
+# (donor.json holds the user's private donor path; only the template ships)
+donor/*
+!donor/donor.example.json
+!donor/.gitkeep
+
+# Per-user setup config (GTA V dir, CodeWalker dir, donor path)
+setup.json
+
+# Python noise
+__pycache__/
+*.pyc
+*.log

@@ -1,0 +1,331 @@
+{
+  "spec_version": "1.1.0",
+  "project_name": "sketchfab_to_qbox_prop_pipeline",
+  "objective": "Fully headless, zero-GUI pipeline that ingests Sketchfab 3D archives/files, normalizes geometry/materials/collisions, converts to GTA V (.ydr/.ytyp props, .ydd skinned drawable dictionaries) via Sollumz in Blender background mode, and outputs ready-to-ensure FiveM Qbox resources. v1.1.0 adds ped_clothing, generation-aware export, apparel-pack layout, toolchain probing, hardened archive/input validation, and the external-converter exclusion policy.",
+  "hard_constraints": [
+    "NEVER open Blender GUI or prompt for manual user intervention during asset processing.",
+    "ALL Blender operations MUST run via `blender --background --factory-startup --python-exit-code 1 --python <worker_script> -- <args>` with Sollumz explicitly enabled in code each run.",
+    "NEVER silently ship broken assets. Any asset failing a validation gate MUST move to `quarantine/<job_id>/` with a `failure_report.json`.",
+    "ALL generated GTA archetype/model names MUST match regex `^[a-z0-9_]{3,48}$` and start with prefix `sf_`. Apparel streaming filenames using FiveM's `fullDlc^component` convention are an explicit exception (they are stream filenames, not archetype names).",
+    "ALL production conversion is LOCAL. No automated job may contact gtax.dev, upload source assets, or fall back to a hosted converter. Local failure = normal quarantine.",
+    "Zero third-party Python dependencies outside Blender's embedded interpreter (stdlib only in orchestrator/dashboard/harness).",
+    "Never claim an unverified capability. RSC7 magic alone does NOT prove generation validity; the uint32 at offset 4 must match the probed RSC_VERSION constant for (extension, target generation).",
+    "Never silently overwrite an existing published resource, and never leave a partially published directory (stage fully, then atomic rename)."
+  ],
+  "toolchain_baseline": {
+    "blender": "5.2.1 (verified installed)",
+    "blender_python": "3.13.x (embedded)",
+    "orchestrator_python": "3.12",
+    "sollumz": "2.9.0",
+    "szio": "1.3.0.dev9",
+    "pymateria": "0.2.0",
+    "texconv": "bin/texconv.exe (sha256 recorded, no reliable --version)",
+    "drift_policy": "version drift -> WARN_TOOLCHAIN_VERSION_DRIFT. Missing required capability -> ERR_TOOLCHAIN_INCOMPATIBLE. Pins are never auto-upgraded."
+  },
+  "capability_probe": {
+    "script": "inspect_sollumz.py (runs inside Blender)",
+    "output": "build/toolchain_caps.json (cached; delete to force re-probe)",
+    "reports": [
+      "blender_version, embedded python, sollumz version/module path",
+      "registered bpy.ops.sollumz.* operators",
+      "format providers (CWXML_GEN8, CWXML_GEN9, NATIVE_GEN8, NATIVE_GEN9 observed)",
+      "rsc_versions: per-generation RSC_VERSION constants for .ydr/.ydd/.yft/.ytd/.ytyp/.ybn/.yld",
+      "capabilities: drawable_dictionary_export, skinned_export, drawable_helpers, cloth_export, ymt_export, embedded_bounds",
+      "bundled dependency versions (szio, pymateria)"
+    ]
+  },
+  "external_converters": {
+    "policy": "reference-only; explicitly excluded from the production pipeline",
+    "entries": {
+      "gtax-dev/gtav-glb-to-ydr": "hosted Go CLI client, not a local engine. No dependency, no auto-upload, no API key, no fallback, output may not bypass gates. Manual human comparison use only.",
+      "gtax-dev/v-drawable-to-glb": "hosted reverse-conversion API client. Diagnostic-only manual use; never a validation oracle; never in production.",
+      "Sollumz/Sollumz": "the primary local conversion engine; pinned + probed."
+    },
+    "network_isolation": "no automated job may contact remote conversion services. A failed local conversion quarantines normally."
+  },
+  "directory_contract": {
+    "inbox": "./inbox",
+    "working": "./work/<job_id>/{job.json,raw/,stream/,textures/,lua_out/,worker_result.json,blender_stdout.log}",
+    "quarantine": "./quarantine/<job_id>/",
+    "output_resources": "./build/resources/[sketchfab_props]/<resource_name>/",
+    "registry_file": "./build/asset_registry.json",
+    "caps_file": "./build/toolchain_caps.json"
+  },
+  "input_contract": {
+    "supported_extensions": [".glb", ".gltf", ".fbx", ".obj", ".zip"],
+    "optional_sidecar_filename": "override.json",
+    "sidecar_schema": {
+      "asset_name": "string|null (default null; derived slug if unset)",
+      "target_height_meters": "float|null",
+      "scale_multiplier": "float (default 1.0)",
+      "rotation_offset_deg": "[x,y,z] deg (default [0,0,0])",
+      "pivot_mode": "enum [bottom_center, center, keep_origin] (default bottom_center)",
+      "split_multi_prop": "bool (default false)",
+      "collision_mode": "enum [box, convex_hull, mesh_decimated, none] (default convex_hull; ped forces none)",
+      "max_triangles": "int (default 35000)",
+      "max_texture_res": "int (default 2048)",
+      "motion_config": "object (default {}; fields incl. keep_actions, part_map list|dict values + reserved '_body' label, assembly_config {max_parts, spin_min_deg, spin_name_patterns, spin_max_travel_m, spin_tail_min_dpf, part_collision} — see MOTION_SPEC.md)",
+      "exclude_objects": "list of fnmatch patterns on object names (default []; matched objects + subtrees dropped after import, all modes)",
+      "texture_mode": "enum [embed, ytd] (default embed)",
+      "lod_dist": "float (default 150.0)",
+      "hd_texture_dist": "float (default 60.0)",
+      "archetype_flags": "string (default '32')",
+      "license": "string|null",
+      "source_url": "string|null",
+      "attribution": "string|null",
+      "asset_type": "enum [prop, ped] (default prop; never guessed from geometry)",
+      "require_weights": "bool (default true; ped-only gate)",
+      "clothing_fix": "object (default {}; supports normal_push_meters float)",
+      "target_generation": "enum [legacy, enhanced, both] (default legacy=GEN8)",
+      "apparel_pack": "bool (default false; requires apparel_config + ped)",
+      "apparel_config": "{ped, dlc, components:[{component,index,textures}]} | null",
+      "max_zip_members": "int (default 512)",
+      "max_zip_extract_bytes": "int (default 536870912)",
+      "blender_timeout_s": "int (default 120)"
+    },
+    "malformed_sidecar": "invalid JSON or non-object -> quarantine ERR_MALFORMED_SIDECAR (never silent-continue on defaults)"
+  },
+  "edge_case_rules": [
+    {
+      "id": "EC_01_ARCHIVE_EXTRACTION",
+      "condition": "Input is a .zip archive.",
+      "formulaic_action": [
+        "Validate EVERY member BEFORE extracting anything: reject absolute/drive-letter/parent-traversal names (ERR_ZIP_TRAVERSAL), nested archives (ERR_ZIP_NESTED_ARCHIVE), member count over cap (ERR_ZIP_TOO_MANY_FILES), total uncompressed size over cap (ERR_ZIP_TOO_LARGE). Corrupt zip -> ERR_BAD_ZIP.",
+        "Extract to ./work/<job_id>/raw/.",
+        "Search recursively for primary 3D file in priority order: .glb > .gltf > .fbx > .obj; ties/selects largest file by byte size.",
+        "Zero matching files -> ERR_NO_SUPPORTED_3D_FILE. Multiple same-priority roots -> process largest + WARN_MULTIPLE_SCENE_FILES.",
+        "override.json inside the zip merges over the external one.",
+        "Preserve source sha256 + provenance fields through to the registry/report."
+      ]
+    },
+    {
+      "id": "EC_01b_CONTENT_SNIFF",
+      "condition": "Any resolved source file.",
+      "formulaic_action": [
+        "Magic-byte check: .glb must start 'glTF'; .gltf must start '{'; .fbx must carry FBX magic/header; .obj must be text.",
+        "Mismatch -> ERR_MALFORMED_SOURCE:<detail>."
+      ]
+    },
+    {
+      "id": "EC_02_ANIMATIONS_AND_ARMATURES",
+      "condition": "asset_type=prop AND scene contains armatures, shape keys, NLA, or actions. NOT applied to ped.",
+      "formulaic_action": [
+        "Strip all actions, NLA tracks, shape keys.",
+        "Armature-deformed meshes: bake evaluated geometry at frame 1 (convert to MESH), then delete armatures and empty bone hierarchies.",
+        "WARN_STRIPPED_ANIMATION_OR_ARMATURE."
+      ]
+    },
+    {
+      "id": "EC_03_NON_MESH_JUNK",
+      "condition": "Camera/Light/Speaker/Empty/Curve/GreasePencil in scene.",
+      "formulaic_action": [
+        "Delete CAMERA, LIGHT, SPEAKER, GPENCIL/LINEART, LIGHT_PROBE, LATTICE.",
+        "Convert CURVE/SURFACE/FONT/META to MESH else delete.",
+        "Props: unparent meshes keep_transform, delete EMPTYs. Ped variant: keep the armature and its ancestor chain; reparent orphaned children preserving matrix_world."
+      ]
+    },
+    {
+      "id": "EC_04_MULTI_PROP_PACKS_VS_MULTI_PART_MODELS",
+      "condition": ">1 MESH object (prop path only).",
+      "formulaic_action": [
+        "Delete degenerate (zero-vert/face) meshes first.",
+        "split_multi_prop=false: join all into one prop. true: each top-level mesh -> <name>_NN, cap 25 -> ERR_TOO_MANY_SUBPROPS.",
+        "Ped path: never join; every skinned mesh stays a separate drawable model."
+      ]
+    },
+    {
+      "id": "EC_04b_ASSEMBLY_PARTS_AND_SPIN",
+      "condition": "motion_config.motion_mode='multi_part_prop_assembly'.",
+      "formulaic_action": [
+        "Sample world matrices per frame across frame_window (stride>=1, ~600 max). Mover = any sample differs from folded pose; static loose meshes merge into <name>_body (ERR_NO_STATIC_BODY if none).",
+        "part_map list value = group join into ONE rigid part (label = archetype name); dict value adds kind/spin_axis/spin_rpm. Missing or duplicated member names -> ERR_UNMAPPED_PART. Resulting parts > assembly_config.max_parts (default 12) -> ERR_TOO_MANY_PARTS.",
+        "kind resolution: explicit kind wins; else auto-spin requires ALL of (a) one-directional signed cumulative rotation >= spin_min_deg (default 300), (b) still turning at window end (tail rate >= spin_tail_min_dpf default 0.1deg/frame), (c) hub evidence: name matches spin_name_patterns OR carrier-relative travel <= spin_max_travel_m (default 0.05). Passing a+b but failing c or settling -> hinge + WARN_HIGH_ROTATION_HINGE; dict spin params imply spin; else hinge. <300deg own-origin rotations stay hinge.",
+        "part_map '_body' label pins animated members into the carrier; deployed poses are carrier-relativized via the carrier's world delta (WARN_CARRIER_MOTION_RELATIVIZED) -- no-op on static bodies.",
+        "kind=spin -> <name>_propNN, manifest carries attach_offset (hub = point on recovered axis nearest centroid), initial_rot, spin_axis, spin_rpm (derived from cumulative revs/window seconds) -- never folded/deployed_rot. Static spin part requires explicit spin_axis+spin_rpm else ERR_SPIN_AXIS_UNRESOLVED / ERR_SPIN_RPM_UNRESOLVED.",
+        "kind=hinge -> <name>_partNN, manifest carries attach_offset, deployed_offset, folded_rot, deployed_rot (YXZ_deg project convention).",
+        "Collision: _body keeps collision_mode; all other targets export part_collision (default none) -- thin blades never carry collision.",
+        "Clip playback: single-clip muted NLA auto-activates per object; multi-clip objects stay muted + WARN_AMBIGUOUS_ACTIONS; motion_config.keep_actions substrings select a clip-set (no match -> ERR_KEEP_ACTIONS_NO_MATCH).",
+        "exclude_objects (fnmatch on object names) removes matched objects + subtrees after import in every mode."
+      ]
+    },
+    {
+      "id": "EC_05_SCALE_AND_TRANSFORMS",
+      "condition": "Extreme scale / negative transforms / unit drift.",
+      "formulaic_action": [
+        "Props: transform_apply(rotation+scale), unit heuristics (WARN_AUTO_SCALED_*), scale_multiplier + rotation_offset, normals recalc.",
+        "Ped: bake world transform into mesh verts; rigid-map the armature rest bones by the SAME matrix (the only permitted edit_bones write: head/tail + roll-compensated so rest frame = M @ old_frame); armature object transform reset to identity. Never decimate skinned meshes."
+      ]
+    },
+    {
+      "id": "EC_06_PIVOT_AND_GROUNDING",
+      "condition": "Origin offset from geometry.",
+      "formulaic_action": [
+        "bottom_center: translate so bbox min-z sits at 0, XY centered. center: bbox center at origin. keep_origin: untouched.",
+        "Ped: same pivots, applied identically to mesh verts AND armature rest bones so skinning stays consistent."
+      ]
+    },
+    {
+      "id": "EC_07_POLY_BUDGET",
+      "condition": "tri_count over sidecar.max_triangles (default 35000).",
+      "formulaic_action": [
+        "Props: >6x cap -> ERR_POLYCOUNT_EXCEEDS_HARD_CAP; <=6x -> DECIMATE collapse to ratio + WARN_AUTO_DECIMATED.",
+        "Ped: any overage -> ERR_POLYCOUNT_EXCEEDS_HARD_CAP (decimation destroys weights; never silently applied -> recorded in report.skipped)."
+      ]
+    },
+    {
+      "id": "EC_08_UV_AND_SHADER_NORMALIZATION",
+      "condition": "Procedural nodes, missing UVs, packed/oversized textures.",
+      "formulaic_action": [
+        "Ensure active UV layer (smart_project fallback + WARN_GENERATED_SMART_UV).",
+        "Unpack packed images to textures/, downscale >max_texture_res preserving power-of-two, convert non-png to png.",
+        "Rebuild materials into Sollumz-compatible shader nodes (diffuse/normal/spec).",
+        "Zero-texture flat-color material -> generated 16x16 solid png fallback + WARN_*.",
+        "texture_mode=ytd: build external <asset>_txd.ytd, wire arch/drawable texture_dictionary, require valid RSC7 .ytd else ERR_TEXTURE_MODE_YTD_FAILED."
+      ]
+    },
+    {
+      "id": "EC_09_COLLISION_GENERATION",
+      "condition": "prop collision required (collision_mode != none).",
+      "formulaic_action": [
+        "none -> skip. box -> AABB mesh. convex_hull -> bmesh convex hull. mesh_decimated -> <=1500 tris + loose removed.",
+        "Embedded bounds only; verified installed capability. External .ybn is NOT claimed.",
+        "Ped: collision_mode must be none (else ERR_COLLISION_MODE_UNSUPPORTED); embedded bounds verified via .ydr.xml when mode != none else ERR_COLLISION_MODE_UNSUPPORTED:verify_failed."
+      ]
+    },
+    {
+      "id": "EC_10_PED_CLOTHING",
+      "condition": "sidecar.asset_type='ped' OR motion_config.motion_mode='ped_clothing'.",
+      "formulaic_action": [
+        "Requires probed drawable_dictionary_export AND skinned_export else ERR_PED_CLOTH_EXPORT_UNSUPPORTED.",
+        "Exactly one armature: none -> ERR_PED_NO_ARMATURE; >1 -> ERR_PED_MULTI_ARMATURE.",
+        "Vertex groups must name existing bones else ERR_PED_SKELETON_MISMATCH. Zero effective weights: require_weights=true -> ERR_PED_NO_WEIGHTS; false -> WARN_PED_MESH_UNWEIGHTED.",
+        ">4 bone influences per vertex -> truncate to strongest 4 + WARN_WEIGHT_INFLUENCES_TRUNCATED.",
+        "clothing_fix.normal_push_meters displaces verts along smooth normals; shape keys removed first + WARN_SHAPE_KEYS_REMOVED_FOR_CLOTHING_FIX.",
+        "No reparent/edit_bones except: matrix_world-preserving parent of meshes to the armature (drawable-model discovery), and the EC_05 rigid rest remap.",
+        "Export = drawable dictionary: root EMPTY (DRAWABLE_DICTIONARY) -> armature (DRAWABLE) -> meshes (DRAWABLE_MODEL, LOD HIGH). Emits <name>.ydd. Never .ydr/.ytyp.",
+        "Skeleton-vs-mesh sanity on the .ydd.xml: bone rest positions must overlap exported mesh bounds else ERR_PED_TRANSFORM_MISMATCH.",
+        "clothing_fix.cloth or YLD request -> ERR_PED_CLOTH_PHYSICS_UNSUPPORTED (no verified write path).",
+        "apparel_pack=true requires valid apparel_config and (for a registerable pack) a .ymt this toolchain cannot emit -> ERR_PED_APPAREL_YMT_UNSUPPORTED before publish. The .ydd conversion itself still completes first for diagnostics."
+      ]
+    }
+  ],
+  "sollumz_execution_protocol": {
+    "research_step_for_coder": [
+      "Probe the installed add-on every run (inspect_sollumz.py -> build/toolchain_caps.json); do NOT guess operator names or hardcode RSC versions."
+    ],
+    "required_sollumz_outputs": {
+      "prop": "Drawable (sollum DRAWABLE) + shared YTYP archetype (bbMin/bbMax/bsCenter/bsRadius/lodDist/hdTextureDist/flags) -> .ydr + .ytyp (+ .ytd when texture_mode=ytd).",
+      "ped": "Drawable dictionary: EMPTY root DRAWABLE_DICTIONARY -> armature DRAWABLE (keeps skeleton) -> mesh DRAWABLE_MODELs -> .ydd (+ .ytd optional).",
+      "generation": "export_assets target_versions={'GEN8'} legacy | {'GEN9'} enhanced | {'GEN8','GEN9'} both. 'both' emits gen8/ and gen9/ subtrees -> two published resources (<name>, <name>_g9)."
+    }
+  },
+  "qbox_packaging_contract": {
+    "resource_folder_pattern": "./build/resources/[sketchfab_props]/<resource_name>/",
+    "files_to_generate": [
+      {
+        "path": "fxmanifest.lua",
+        "template_prop": "fx_version 'cerulean'\ngame 'gta5'\n\ndescription 'Auto-built Sketchfab prop: <name>'\n\ndata_file 'DLC_ITYP_REQUEST' 'stream/<name>.ytyp'\n",
+        "template_ped": "fx_version 'cerulean'\ngame 'gta5'\n\ndescription 'Auto-built skinned drawable dictionary: <name>'\n",
+        "template_apparel": "fx_version 'cerulean'\ngame 'gta5'\n\ndescription 'Auto-built apparel pack: <name>'\n\ndependency '/policy:subdir_file_mapping'\n\nfiles { '<ped>_<ped>_<dlc>_shop.meta' }\n\ndata_file 'SHOP_PED_APPAREL_META_FILE' '<ped>_<ped>_<dlc>_shop.meta'\n",
+        "notes": [
+          "lua54 is NEVER emitted (deprecated; Lua 5.4 is the default runtime).",
+          "data_file declarations only for files that exist and resolve inside the resource (manifest gate ERR_MANIFEST_UNRESOLVED)."
+        ]
+      },
+      {"path": "stream/<name>.ydr|.ydd|.ytyp|.ytd(+ .xml sidecars)", "source": "Sollumz export"},
+      {"path": "stream/<fullDlc>/<fullDlc>^<comp>_<idx>_u.ydd + ^<comp>_diff_<idx>_a_uni.ytd (apparel only)", "source": "Sollumz export renamed to the verified FiveM subdir-mapping convention"},
+      {"path": "<ped>_<ped>_<dlc>_shop.meta (apparel only)", "source": "generated ShopPedApparel meta (verified schema)"},
+      {"path": "sequence_manifest.lua | assembly_manifest.lua (motion modes)", "source": "generated; runtime_status=manifest_only_requires_consumer; rotation_order YXZ_deg is a declared project convention, not AttachEntityToEntity's native default"},
+      {
+        "path": "build_report.json",
+        "schema": {
+          "status": "SUCCESS | QUARANTINED",
+          "asset_name": "string", "resource_name": "string",
+          "asset_type": "prop | ped",
+          "target_generation": "legacy | enhanced | both",
+          "source_file": "string", "source_sha256": "string",
+          "dimensions_meters": "[x,y,z]", "final_triangles": "int",
+          "collision_mode": "string", "motion_mode": "string",
+          "texture_mode": "string",
+          "checks_passed": ["gate ids"], "checks_failed": ["gate ids"],
+          "warnings": ["WARN_*"], "skipped": ["feature:reason"],
+          "unsupported": ["capability"], "unresolved_limitations": ["string"],
+          "external_assumptions": ["doc links actually consulted"],
+          "toolchain": "{blender_exe,versions,sollumz,deps,texconv,providers,rsc_versions,capabilities}",
+          "files_readback": ["{file,size,magic,rsc_version}"],
+          "inspect": "source audit", "sollumz_version": "[x,y,z]",
+          "license": "string|null", "source_url": "string|null",
+          "attribution": "string|null", "provenance": "object",
+          "runtime_status": "self_contained | manifest_only_requires_consumer | downstream_consumer_required",
+          "runtime_validation": "NOT_PERFORMED (unless a real FXServer staging run happened)",
+          "spawn_snippet_lua": "string (props only)",
+          "built_at": "iso8601"
+        }
+      }
+    ]
+  },
+  "validation_gates_before_publish": [
+    "Gate 0 (worker): ERR_EXPORT_ARTIFACT_MISSING if any expected native file absent/empty/non-RSC7.",
+    "Gate 1: EVERY emitted .ydr/.ydd/.ytd/.ytyp: exists, size floor (.ydr>1024 or >256 with ytd mode, .ytd/.ydd>1024, .ytyp>64), RSC7 magic, and rsc_version at offset 4 == probed constant for (ext, target gen). Mismatch -> ERR_GATE1_RSC_VERSION_MISMATCH.",
+    "Gate 2 (prop): .ytyp bin+xml exist/parse; every .ydr basename declared; collision declaration present iff mode!=none (else ERR_COLLISION_MODE_UNSUPPORTED:verify_failed).",
+    "Gate 2 (ped): .ydd.xml parses, root is a drawable dictionary, >=2 names (dict + >=1 drawable).",
+    "Gate 3: dims within [0.02, 80.0] all axes.",
+    "Gate 4: asset_name not registered under a different source hash.",
+    "Gate 4b: emitted archetype names must not collide with registry entries or sibling .ytyp.xml under a different source hash (ERR_GATE4_ARCHETYPE_COLLISION).",
+    "Manifest gate: every quoted resource path in fxmanifest resolves inside the resource; lua54 absent.",
+    "Lua gate: generated .lua files loadfile()-checked when a lua runtime is on PATH (WARN_LUA_SYNTAX_UNVERIFIED otherwise).",
+    "Publish: staged fully first; atomic rename per resource; registry append; work dir removed; inbox source consumed on success. Failure anywhere -> quarantine, never a partial publish."
+  ],
+  "error_codes": [
+    "ERR_BAD_ZIP", "ERR_ZIP_TRAVERSAL", "ERR_ZIP_NESTED_ARCHIVE",
+    "ERR_ZIP_TOO_MANY_FILES", "ERR_ZIP_TOO_LARGE",
+    "ERR_NO_SUPPORTED_3D_FILE", "ERR_MALFORMED_SOURCE", "ERR_MALFORMED_SIDECAR",
+    "ERR_UNSUPPORTED_EXT",
+    "ERR_TOOLCHAIN_INCOMPATIBLE", "ERR_TARGET_GENERATION_UNSUPPORTED",
+    "ERR_UNKNOWN_ASSET_TYPE", "ERR_ASSET_TYPE_CONFLICT",
+    "ERR_NO_MESH_AFTER_CLEANUP", "ERR_TOO_MANY_SUBPROPS",
+    "ERR_POLYCOUNT_EXCEEDS_HARD_CAP",
+    "ERR_PREFLIGHT_EMPTY_MESH", "ERR_PREFLIGHT_NO_UV",
+    "ERR_PREFLIGHT_NO_SHADER_MAT", "ERR_PREFLIGHT_MISSING_TEXTURE",
+    "ERR_PREFLIGHT_EMPTY_BOUNDS", "ERR_PREFLIGHT_BAD_NAME",
+    "ERR_TEXTURE_MODE_YTD_FAILED", "ERR_UNKNOWN_TEXTURE_MODE",
+    "ERR_COLLISION_MODE_UNSUPPORTED",
+    "ERR_NO_DRAWABLE_CREATED", "ERR_EXPORT_ARTIFACT_MISSING",
+    "ERR_BLENDER_TIMEOUT", "ERR_WORKER_FAILED",
+    "ERR_GATE1_RSC7_INVALID", "ERR_GATE1_RSC_VERSION_MISMATCH",
+    "ERR_GATE1_YTD_MISSING_OR_NOT_RSC7",
+    "ERR_GATE2_YTYP_INVALID", "ERR_GATE2_YDD_INVALID",
+    "ERR_GATE3_DIMS_OUT_OF_RANGE",
+    "ERR_GATE4_NAME_COLLISION", "ERR_GATE4_ARCHETYPE_COLLISION",
+    "ERR_MANIFEST_UNRESOLVED", "ERR_LUA_SYNTAX",
+    "ERR_MOTION_MODE_REQUIRES_VEHICLE_RIG", "ERR_UNKNOWN_MOTION_MODE",
+    "ERR_FRAME_WINDOW_EMPTY", "ERR_FRAME_OUT_OF_BOUNDS",
+    "ERR_TOO_MANY_SAMPLES", "ERR_TOO_MANY_PARTS", "ERR_NO_STATIC_BODY",
+    "ERR_UNMAPPED_PART", "ERR_NO_GEOMETRY_AT_FRAME",
+    "ERR_ARMATURE_DEFORM_REQUIRES_SNAPSHOT_MODE",
+    "ERR_SPIN_AXIS_UNRESOLVED", "ERR_SPIN_RPM_UNRESOLVED",
+    "ERR_KEEP_ACTIONS_NO_MATCH",
+    "ERR_PED_NO_ARMATURE", "ERR_PED_MULTI_ARMATURE", "ERR_PED_NO_WEIGHTS",
+    "ERR_PED_SKELETON_MISMATCH", "ERR_PED_TRANSFORM_MISMATCH",
+    "ERR_PED_CLOTH_PHYSICS_UNSUPPORTED", "ERR_PED_CLOTH_EXPORT_UNSUPPORTED",
+    "ERR_PED_APPAREL_YMT_UNSUPPORTED", "ERR_APPAREL_CONFIG_INVALID"
+  ],
+  "warning_codes": [
+    "WARN_MULTIPLE_SCENE_FILES", "WARN_STRIPPED_ANIMATION_OR_ARMATURE",
+    "WARN_AUTO_SCALED_CM_TO_M", "WARN_AUTO_SCALED_UP", "WARN_AUTO_DECIMATED",
+    "WARN_GENERATED_SMART_UV", "WARN_TOOLCHAIN_VERSION_DRIFT",
+    "WARN_LUA_SYNTAX_UNVERIFIED",
+    "WARN_PED_MESH_UNWEIGHTED", "WARN_WEIGHT_INFLUENCES_TRUNCATED",
+    "WARN_SHAPE_KEYS_REMOVED_FOR_CLOTHING_FIX",
+    "WARN_AUTO_SPIN_PART", "WARN_HIGH_ROTATION_HINGE",
+    "WARN_CARRIER_MOTION_RELATIVIZED", "WARN_AMBIGUOUS_ACTIONS",
+    "WARN_EXCLUDED_OBJECT", "WARN_SPIN_PIVOT_FALLBACK"
+  ],
+  "deliverables_required_from_coder": [
+    "1. inspect_sollumz.py: probe -> build/toolchain_caps.json (versions, operators, providers, rsc_versions, capabilities, deps).",
+    "2. blender_worker.py: EC_02-EC_10 + Sollumz export (prop + ped) + generation-aware target_versions + readback.",
+    "3. orchestrator.py: sidecar validation, safe zips, toolchain recording, gates, apparel emitters, both-gen publish, registry/report.",
+    "4. test_harness.py: end-to-end regression suite incl. rigged GLB fixture.",
+    "5. dashboard.py: reason map for all codes + asset-type/generation selectors."
+  ]
+}

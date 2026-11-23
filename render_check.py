@@ -200,10 +200,17 @@ def scene_bounds():
     for o in bpy.data.objects:
         if o.type != 'MESH' or o.name.startswith(("Axis", "Bound")):
             continue
-        for c in o.bound_box:
-            w = o.matrix_world @ Vector(c)
-            mn = Vector(map(min, mn, w))
-            mx = Vector(map(max, mx, w))
+        nv = len(o.data.vertices)
+        if nv == 0:
+            continue
+        co = [0.0] * (nv * 3)
+        o.data.vertices.foreach_get("co", co)
+        for x in (min(co[0::3]), max(co[0::3])):
+            for y in (min(co[1::3]), max(co[1::3])):
+                for z in (min(co[2::3]), max(co[2::3])):
+                    w = o.matrix_world @ Vector((x, y, z))
+                    mn = Vector(map(min, mn, w))
+                    mx = Vector(map(max, mx, w))
     return (mn + mx) / 2, max((mx - mn).length, 0.01)
 
 
@@ -349,21 +356,42 @@ if os.path.isdir(SRC):
                     rot = part.get("deployed_rot") or base_rot
                 if interpolate_factor is not None:
                     f = interpolate_factor
-                    off0 = part.get("attach_offset") or (0, 0, 0)
-                    off1 = part.get("deployed_offset", off0) or off0
-                    off = [a + (b - a) * f for a, b in zip(off0, off1)]
-                    r0 = [math.radians(x) for x in
-                          (part.get("folded_rot") or part.get("initial_rot")
-                           or (0, 0, 0))]
-                    r1 = [math.radians(x) for x in
-                          (part.get("deployed_rot")
-                           or part.get("folded_rot")
-                           or part.get("initial_rot") or (0, 0, 0))]
-                    q0 = Euler(r0, 'YXZ').to_quaternion()
-                    q1 = Euler(r1, 'YXZ').to_quaternion()
-                    if q0.dot(q1) < 0.0:  # hemisphere continuity
-                        q1.negate()
-                    rot = q0.slerp(q1, f).to_euler('YXZ')
+                    kfs = part.get("keyframes")
+                    if kfs:
+                        # piecewise lerp+slerp between adjacent stops;
+                        # quats chained sequentially (dot<0 -> negate) so
+                        # cumulative tracks >180deg don't snap.
+                        tks = [float(k["t"]) for k in kfs]
+                        ps = [Vector(k["pos"]) for k in kfs]
+                        qs = [Euler([math.radians(x) for x in k["rot"]],
+                                    'YXZ').to_quaternion() for k in kfs]
+                        for i in range(1, len(qs)):
+                            if qs[i - 1].dot(qs[i]) < 0.0:
+                                qs[i].negate()
+                        hi = next((i for i in range(1, len(tks))
+                                   if tks[i] >= f), len(tks) - 1)
+                        lo = max(0, hi - 1)
+                        alpha = (0.0 if tks[hi] <= tks[lo]
+                                 else (f - tks[lo]) / (tks[hi] - tks[lo]))
+                        off = list(ps[lo] + (ps[hi] - ps[lo]) * alpha)
+                        rot = qs[lo].slerp(qs[hi], alpha).to_euler('YXZ')
+                    else:
+                        off0 = part.get("attach_offset") or (0, 0, 0)
+                        off1 = part.get("deployed_offset", off0) or off0
+                        off = [a + (b - a) * f
+                               for a, b in zip(off0, off1)]
+                        r0 = [math.radians(x) for x in
+                              (part.get("folded_rot")
+                               or part.get("initial_rot") or (0, 0, 0))]
+                        r1 = [math.radians(x) for x in
+                              (part.get("deployed_rot")
+                               or part.get("folded_rot")
+                               or part.get("initial_rot") or (0, 0, 0))]
+                        q0 = Euler(r0, 'YXZ').to_quaternion()
+                        q1 = Euler(r1, 'YXZ').to_quaternion()
+                        if q0.dot(q1) < 0.0:  # hemisphere continuity
+                            q1.negate()
+                        rot = q0.slerp(q1, f).to_euler('YXZ')
                 if off is None:
                     continue
                 objs = load_model(model)

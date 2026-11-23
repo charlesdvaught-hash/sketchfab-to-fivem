@@ -103,14 +103,30 @@ def build_inspect():
 
 
 def world_bbox(objs):
-    """Combined world-space bbox of mesh objects -> (min_v, max_v, dims)."""
+    """Combined world-space bbox of mesh objects -> (min_v, max_v, dims).
+
+    Reads verts directly -- obj.bound_box is a lazy RNA cache that does
+    NOT refresh after mesh.data.transform() without a depsgraph pass
+    (the +1.315 m buster float bug). Vertex min/max is immune.
+    """
     mins = Vector((float("inf"),) * 3)
     maxs = Vector((float("-inf"),) * 3)
     for o in objs:
-        for corner in o.bound_box:
-            w = o.matrix_world @ Vector(corner)
-            mins = Vector(map(min, mins, w))
-            maxs = Vector(map(max, maxs, w))
+        nv = len(o.data.vertices)
+        if nv == 0:
+            continue
+        co = [0.0] * (nv * 3)
+        o.data.vertices.foreach_get("co", co)
+        lx = (min(co[0::3]), max(co[0::3]))
+        ly = (min(co[1::3]), max(co[1::3]))
+        lz = (min(co[2::3]), max(co[2::3]))
+        mw = o.matrix_world
+        for x in lx:
+            for y in ly:
+                for z in lz:
+                    w = mw @ Vector((x, y, z))
+                    mins = Vector(map(min, mins, w))
+                    maxs = Vector(map(max, maxs, w))
     return mins, maxs, maxs - mins
 
 
@@ -1259,8 +1275,8 @@ def motion_snapshot_sequence(job, mc):
 def resolve_bone_delta(obj, bone_samples):
     """Armature-deformed part: find the single driving bone's world matrices.
 
-    Returns (hinge_vec, W0, W1) or None when ambiguous/zero-delta
-    (MOTION_SPEC safeguard S2).
+    Returns (hinge_vec, W0, W1, (arm_name, bone_name)) or None when
+    ambiguous/zero-delta (MOTION_SPEC safeguard S2).
     """
     arm_names = {m.object.name for m in obj.modifiers
                  if m.type == "ARMATURE" and m.object}
@@ -1273,8 +1289,8 @@ def resolve_bone_delta(obj, bone_samples):
                 moved.append((an, bn, w0, w1))
     if len(moved) != 1:
         return None
-    _, _, w0, w1 = moved[0]
-    return w0.to_translation(), w0, w1
+    an, bn, w0, w1 = moved[0]
+    return w0.to_translation(), w0, w1, (an, bn)
 
 
 def rotation_delta_q(a_mw, b_mw):
@@ -1352,6 +1368,75 @@ def spin_axis_point(mw_a, mw_b, axis):
     return alpha * u + beta * v
 
 
+def _slerp_chain(qs):
+    """Sequential hemisphere continuity: dot(q[i-1],q[i])<0 -> flip q[i].
+
+    Anchoring signs to qs[0] breaks cumulative tracks >180deg (a legit
+    negative dot at the tail); chaining per-adjacent-step keeps every
+    segment on the short path.
+    """
+    out = [qs[0]]
+    for q in qs[1:]:
+        q = q.copy()
+        if out[-1].dot(q) < 0.0:
+            q.negate()
+        out.append(q)
+    return out
+
+
+def rdp_hinge_stops(ts, pos_exact, q_exact, v_c, tol_m, max_stops):
+    """Adaptive keyframe stops by max-vertex error between piecewise
+    lerp+slerp (current stops) and the exact per-frame pose.
+
+    ts: [t_k] sample times; pos_exact: [Vector]; q_exact: [Quaternion]
+    (already in manifest space); v_c: canonical-vert subsample
+    ([Vector]) INCLUDING the 6 axis-extremes so tip rotation error is
+    always measured. Returns sorted list of sample indices.
+    """
+    import numpy as np
+    n = len(ts)
+    vc = np.array([[v.x, v.y, v.z] for v in v_c], dtype=float)
+    # exact pose at every candidate frame (n x m x 3) -- ~2MB worst case.
+    exact = np.empty((n, len(v_c), 3))
+    for k in range(n):
+        m3 = np.array(q_exact[k].to_matrix())
+        exact[k] = vc @ m3.T + np.array([*pos_exact[k]])
+
+    stops = [0, n - 1]
+
+    def pose_err(k):
+        # piecewise interp between the stops bracketing k
+        lo = 0
+        for i in range(len(stops) - 1):
+            if stops[i] <= k:
+                lo = i
+        a, b = stops[lo], stops[lo + 1]
+        alpha = 0.0 if b == a else (ts[k] - ts[a]) / (ts[b] - ts[a])
+        p_i = pos_exact[a] + (pos_exact[b] - pos_exact[a]) * alpha
+        qa, qb = q_exact[a], q_exact[b].copy()
+        if qa.dot(qb) < 0.0:      # per-interval hemisphere check
+            qb.negate()
+        m_i = np.array(qa.slerp(qb, alpha).to_matrix())
+        pred = vc @ m_i.T + np.array([*p_i])
+        return float(np.linalg.norm(pred - exact[k], axis=1).max())
+
+    while len(stops) < max_stops:
+        in_stops = set(stops)
+        worst_err, worst_k = 0.0, None
+        for k in range(1, n - 1):
+            if k in in_stops:
+                continue
+            e = pose_err(k)
+            if e > worst_err:
+                worst_err, worst_k = e, k
+        if worst_k is None or worst_err <= tol_m:
+            break
+        stops.insert(
+            next(i for i in range(len(stops)) if stops[i] > worst_k),
+            worst_k)
+    return stops
+
+
 def motion_multi_part(job, mc):
     """Split into <base>_body + hinge <base>_partNN + spin <base>_propNN."""
     scene = bpy.context.scene
@@ -1360,6 +1445,9 @@ def motion_multi_part(job, mc):
     cfg = mc.get("assembly_config") or {}
     part_map = mc.get("part_map") or {}
     max_parts = int(cfg.get("max_parts", 12))
+    kf_mode = cfg.get("keyframe_mode", "adaptive")
+    kf_tol = float(cfg.get("keyframe_tol_m", 0.02))
+    kf_max = int(cfg.get("keyframe_max_stops", 5))
     spin_min_deg = float(cfg.get("spin_min_deg", 300.0))
     spin_max_travel = float(cfg.get("spin_max_travel_m", 0.05))
     spin_tail_min = float(cfg.get("spin_tail_min_dpf", 0.1))
@@ -1500,6 +1588,7 @@ def motion_multi_part(job, mc):
     # kind wins; dict params (spin_axis/spin_rpm) imply spin intent. ---
     spin_info = {}   # group index -> {axis_w, pivot_w, rpm}
     part_geom = {}   # group index -> (hinge, W0, W1) from first MOVED member
+    driver_of = {}   # group index -> ("obj", name) | ("bone", arm, bone)
     for gi, g in enumerate(groups):
         n = g["members"][0]
         signed, cum, axis_w, _trav, tail_rate = spin_metrics(mw_samples[n])
@@ -1586,12 +1675,46 @@ def motion_multi_part(job, mc):
         elif not matrices_close(mw0[driver], mw1[driver]):
             part_geom[gi] = (mw0[driver].to_translation(),
                              mw0[driver], mw1[driver])
+            driver_of[gi] = ("obj", driver)
         else:
             res = resolve_bone_delta(src_by_name[driver], bone_samples)
             if res is None:
                 fail("ERR_ARMATURE_DEFORM_REQUIRES_SNAPSHOT_MODE")
                 return None
-            part_geom[gi] = res
+            hinge_v, w0, w1, bone_ref = res
+            part_geom[gi] = (hinge_v, w0, w1)
+            driver_of[gi] = ("bone", bone_ref[0], bone_ref[1])
+
+    # --- driver trajectories for manifest keyframes: sample the driving
+    # transform at EVERY sample frame while the scene is still animated.
+    # Object drivers reuse mw_samples; bone-driven drivers need one more
+    # pass over sample_frames BEFORE the bake below deletes sources and
+    # purges animation. ---
+    driver_traj = {}   # group index -> [W_k per sample_frames]
+    bone_drivers = {gi: tuple(rb) for gi, (tag, *rb) in driver_of.items()
+                    if tag == "bone"}
+    for gi, (tag, *rb) in driver_of.items():
+        if tag == "obj":
+            driver_traj[gi] = list(mw_samples[rb[0]])
+    if bone_drivers:
+        need = set(bone_drivers.values())
+        trajs = {rb: [] for rb in need}
+        cur_f = scene.frame_current
+        for f in sample_frames:
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            for a in scene.objects:
+                if a.type != "ARMATURE":
+                    continue
+                mw_a = a.matrix_world
+                for pb in a.pose.bones:
+                    rb = (a.name, pb.name)
+                    if rb in need:
+                        trajs[rb].append(mw_a @ pb.matrix.copy())
+        scene.frame_set(cur_f)
+        bpy.context.view_layer.update()
+        for gi, rb in bone_drivers.items():
+            driver_traj[gi] = trajs[rb]
 
     # --- bake folded-pose world geometry for everything. ---
     baked = {o.name: eval_baked_obj(o) for o in src}
@@ -1713,6 +1836,58 @@ def motion_multi_part(job, mc):
                                          round(dep_n.z, 4)],
                      "folded_rot": fivem_euler(R @ W0 @ D4_inv),
                      "deployed_rot": fivem_euler(R @ W1_rel)}
+            # --- manifest keyframes (Option c): exact per-sample poses,
+            # adaptive RDP stop selection. W_rel(k) is the driver's world
+            # pose mapped into the body's f_start frame (carrier-relative:
+            # ref0 @ ref_k^-1 @ W_k -- generalizes W1_rel = D_b_inv @ W1).
+            # The emitted basis ramps the rest_rot compensation across t:
+            # R@W_rel @ slerp(D4_inv -> I, t), so t=0 == folded_rot and
+            # t=1 == deployed_rot bit-for-bit and the trajectory is
+            # continuous (a hard D4 drop at t=1 would be an irreducible
+            # step the RDP would waste stops chasing). ---
+            if kf_mode != "off" and gi in driver_traj:
+                traj = driver_traj[gi]
+                ref_s = mw_samples[ref]
+                n_s = len(sample_frames)
+                ts = [(f - f_start) / (f_end - f_start)
+                      for f in sample_frames]
+                q_d4inv = D4_inv.to_quaternion()
+                q_ident = Euler((0.0, 0.0, 0.0)).to_quaternion()
+                N3 = N.to_3x3()
+                pos_exact, q_exact = [], []
+                for k in range(n_s):
+                    w_rel = ref_s[0] @ ref_s[k].inverted() @ traj[k]
+                    pos_exact.append(
+                        hinge_n + N3 @ (w_rel.to_translation() - hinge))
+                    q_exact.append(
+                        (R @ w_rel).to_quaternion()
+                        @ q_d4inv.slerp(q_ident, ts[k]))
+                # <=128-vert subsample: <=122 uniform-stride + the 6
+                # axis-extremes (tip rotation error lives at the furthest
+                # vertex)
+                all_co = [v.co for v in b.data.vertices]
+                n_v = len(all_co)
+                pick = set(range(0, n_v, max(1, -(-n_v // 122))))
+                for a in range(3):
+                    pick.add(min(range(n_v), key=lambda i: all_co[i][a]))
+                    pick.add(max(range(n_v), key=lambda i: all_co[i][a]))
+                b_inv_kf = basis_q.to_matrix().inverted()
+                v_c = [D_rot @ (b_inv_kf @ (all_co[i] - hinge_n))
+                       for i in sorted(pick)]
+                if kf_mode == "uniform":
+                    stops = sorted({min(range(n_s),
+                                        key=lambda k: abs(ts[k] - tw))
+                                    for tw in (0.0, 0.25, 0.5, 0.75, 1.0)})
+                else:
+                    stops = rdp_hinge_stops(ts, pos_exact, q_exact, v_c,
+                                            kf_tol, kf_max)
+                entry["keyframes"] = [
+                    {"t": round(ts[k], 4),
+                     "pos": [round(pos_exact[k].x, 4),
+                             round(pos_exact[k].y, 4),
+                             round(pos_exact[k].z, 4)],
+                     "rot": fivem_euler(q_exact[k].to_matrix())}
+                    for k in stops]
         # Canonicalise verts into pivot-local orientation: baked verts carry
         # the part's f_start world rotation, and consumers apply the emitted
         # folded/initial rotation as an absolute basis -- without unrotating
@@ -1745,12 +1920,20 @@ def motion_multi_part(job, mc):
                       "canonicalised into pivot-local orientation, so\n"
                       "folded_rot/initial_rot are ABSOLUTE bases (apply\n"
                       "once), not additive deltas. When interpolating via\n"
-                      "quaternions, hemisphere-normalize first (flip q1 if\n"
-                      "dot(q0,q1)<0) or slerp takes the 360-deg long path.\n"
+                      "quaternions, hemisphere-normalize SEQUENTIALLY (for\n"
+                      "i>0 flip q[i] if dot(q[i-1],q[i])<0) or slerp takes\n"
+                      "the 360-deg long path; anchoring to q[0] breaks\n"
+                      "cumulative tracks past 180deg.\n"
                       "Usage: attach each part to the body entity at\n"
                       "attach_offset with folded_rot/initial_rot. kind=hinge:\n"
-                      "interpolate offset->deployed_offset + rot->deployed_rot\n"
-                      "over transition_ms. kind=spin: rotate continuously\n"
+                      "a 'keyframes' array of {t,pos,rot} stops (t in\n"
+                      "0..1 over frame_window, pos body-local, rot YXZ_deg\n"
+                      "absolute basis) selected by adaptive RDP to track the\n"
+                      "source trajectory <= keyframe_tol_m; interpolate\n"
+                      "piecewise lerp+slerp between adjacent stops at local\n"
+                      "alpha=(t-t_i)/(t_i+1-t_i). No 'keyframes' = fall back\n"
+                      "to offset->deployed_offset + rot->deployed_rot over\n"
+                      "transition_ms. kind=spin: rotate continuously\n"
                       "about attach_offset on spin_axis at spin_rpm (G2 -\n"
                       "never a folded/deployed hinge angle).\n"
                       "runtime_status: manifest only - a runtime consumer is required.",
@@ -3050,7 +3233,17 @@ def _comoving_clusters(recipe, context):
     # recipe-space AABBs for the multi-instance spatial guard
     aabb = {}
     for n, o in objs.items():
-        cs = [M @ (o.matrix_world @ Vector(c)) for c in o.bound_box]
+        nv = len(o.data.vertices)
+        if nv == 0:
+            continue
+        co = [0.0] * (nv * 3)
+        o.data.vertices.foreach_get("co", co)
+        lmin = (min(co[0::3]), min(co[1::3]), min(co[2::3]))
+        lmax = (max(co[0::3]), max(co[1::3]), max(co[2::3]))
+        cs = [M @ (o.matrix_world @ Vector((x, y, z)))
+              for x in (lmin[0], lmax[0])
+              for y in (lmin[1], lmax[1])
+              for z in (lmin[2], lmax[2])]
         aabb[n] = ([min(c[k] for c in cs) for k in range(3)],
                    [max(c[k] for c in cs) for k in range(3)])
 

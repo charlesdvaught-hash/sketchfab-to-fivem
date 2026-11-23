@@ -15,9 +15,10 @@ Checks:
       (attach_offset + c_ydr).
   [PASS 3b] Max-vertex reconstruction: sampled canonical .ydr verts placed via
       (off + R @ v) vs nearest true source world vert at f_start (chamfer).
-  [PASS 4] Mid-pose check: manifest offset-lerp + hemisphere-guarded slerp at
-      t=0.5 vs TRUE source evaluation at frame_mid — surfaces chord-vs-arc sag
-      and staggered sub-clip timing that endpoint checks miss.
+  [PASS 4] Interior probes: piecewise keyframe lerp+slerp (sequential
+      hemisphere chaining) vs TRUE source evaluation at inter-stop
+      midpoints + fixed sweep — knot points are trivially exact, so the
+      probes sit between them; falls back to t=0.5 on 2-pose manifests.
 """
 import bpy
 import json
@@ -280,59 +281,93 @@ for part in man.get("parts", []):
           f"mean={dn.mean():.4f}m (n={len(pred)}/{len(cverts)} canon, "
           f"{len(tv)} src){extra}")
 
-# --- PASS 4: MID-POSE manifest lerp vs TRUE source frame_mid ---
-# Endpoints match by construction; t=0.5 is where 2-pose interpolation
-# diverges from the source animation (chord-vs-arc, staggered timing).
+# --- PASS 4: INTERIOR PROBES — manifest piecewise lerp vs TRUE source ---
+# Knot points are trivially exact (a baked stop reports 0.0000 by
+# construction). Probe midpoints BETWEEN every adjacent keyframe pair plus
+# a fixed 4-point sweep so inter-stop interpolation error can't hide.
+# Falls back to the single t=0.5 probe for legacy 2-pose manifests.
+def predict_pose(part, t):
+    """Manifest-space (off, R) at normalized t — piecewise keyframe
+    lerp+slerp when 'keyframes' exist, else 2-pose hemisphere slerp."""
+    kfs = part.get("keyframes")
+    if kfs:
+        tks = [float(k["t"]) for k in kfs]
+        ps = [Vector(k["pos"]) for k in kfs]
+        qs = [Euler([math.radians(x) for x in k["rot"]],
+                    'YXZ').to_quaternion() for k in kfs]
+        for i in range(1, len(qs)):
+            if qs[i - 1].dot(qs[i]) < 0.0:  # sequential hemisphere chain
+                qs[i].negate()
+        hi = next((i for i in range(1, len(tks)) if tks[i] >= t),
+                  len(tks) - 1)
+        lo = max(0, hi - 1)
+        a = 0.0 if tks[hi] <= tks[lo] else (t - tks[lo]) / (tks[hi] - tks[lo])
+        return (ps[lo] + (ps[hi] - ps[lo]) * a,
+                qs[lo].slerp(qs[hi], a).to_matrix())
+    off0 = Vector(part.get("attach_offset", (0, 0, 0)))
+    off1 = Vector(part.get("deployed_offset", off0) or off0)
+    r0 = part.get("folded_rot") or part.get("initial_rot") or [0, 0, 0]
+    r1 = part.get("deployed_rot") or part.get("folded_rot") \
+        or part.get("initial_rot") or [0, 0, 0]
+    q0 = Euler([math.radians(x) for x in r0], 'YXZ').to_quaternion()
+    q1 = Euler([math.radians(x) for x in r1], 'YXZ').to_quaternion()
+    return off0 + (off1 - off0) * t, slerp_hemi(q0, q1, t).to_matrix()
+
+
 f_end = man.get("frame_window", {}).get("end_frame", f_start)
-f_mid = (f_start + f_end) // 2
-t_mid = (f_mid - f_start) / (f_end - f_start) if f_end > f_start else 0.0
 if f_end > f_start:
-    print(
-        f"\n=== PASS 4: MANIFEST-LERP vs TRUE SOURCE @ frame {f_mid} "
-        f"(t={t_mid:.4f}) ===")
+    span = f_end - f_start
+    print("\n=== PASS 4: INTERIOR PROBES manifest-vs-TRUE-source ===")
     for part in man.get("parts", []):
         dep_off = part.get("deployed_offset")
         dep_rot = part.get("deployed_rot")
         if not dep_off or not dep_rot:
             continue
+        kfs = part.get("keyframes") or []
+        if len(kfs) >= 2:
+            probes = {0.5 * (float(kfs[i]["t"]) + float(kfs[i + 1]["t"]))
+                      for i in range(len(kfs) - 1)}
+            probes |= {0.125, 0.375, 0.625, 0.875}
+        else:
+            probes = {0.5}
+        frames = sorted({f_start + round(t * span) for t in probes})
+        frames = [f for f in frames if f_start < f < f_end]
         members = part.get("source_objects") or []
-        # depsgraph tracks scene state -- re-fetch fresh per frame_set
-        bpy.context.scene.frame_set(f_mid)
-        bpy.context.view_layer.update()
-        dg_mid = bpy.context.evaluated_depsgraph_get()
-        true_mid = normalize_src(eval_world_verts(members, dg_mid))
         cverts = read_ydr_xml_verts(part["model"])
-        if not true_mid or not cverts:
+        if not members or not cverts:
             continue
-        off0 = Vector(part.get("attach_offset", (0, 0, 0)))
-        off1 = Vector(dep_off)
-        off_mid = off0 + (off1 - off0) * t_mid
-        r0 = part.get("folded_rot") or part.get("initial_rot") or [0, 0, 0]
-        q0 = Euler([math.radians(x) for x in r0], 'YXZ').to_quaternion()
-        q1 = Euler([math.radians(x) for x in dep_rot],
-                   'YXZ').to_quaternion()
-        R_mid = slerp_hemi(q0, q1, t_mid).to_matrix()
         c_local = sum(cverts, Vector()) / len(cverts)
-        pred = off_mid + R_mid @ c_local
-        c_true = sum(true_mid, Vector()) / len(true_mid)
-        delta = (pred - c_true).length
-        flag = "  <-- EXCEEDS 0.03m (chord-vs-arc/staggered)" \
-            if delta > 0.03 else ""
-        print(f"  MIDPOSE_DELTA {part['model']} ({part.get('kind')}): "
-              f"{delta:.4f}m{flag}")
-        # where is the source REALLY at f_mid? near folded endpoint (delayed
-        # timing), near deployed (early), or off-chord (arc sag)?
-        # NOTE: a depsgraph tracks scene state -- re-fetch per frame_set.
-        bpy.context.scene.frame_set(f_end)
-        bpy.context.view_layer.update()
-        dg_e = bpy.context.evaluated_depsgraph_get()
-        true_e = normalize_src(eval_world_verts(members, dg_e))
-        true_f = src_at_start.get(model)
-        if true_f and true_e:
-            cf = sum(true_f, Vector()) / len(true_f)
-            ce = sum(true_e, Vector()) / len(true_e)
-            print(f"      pred_mid={tuple(round(x,3) for x in pred)} "
-                  f"true_mid={tuple(round(x,3) for x in c_true)}")
-            print(f"      |true_mid - folded|={(c_true-cf).length:.3f}m "
-                  f"|true_mid - deployed|={(c_true-ce).length:.3f}m "
-                  f"|folded - deployed|={(ce-cf).length:.3f}m")
+        worst = None
+        for fr in frames:
+            t_a = (fr - f_start) / span  # actual t at the integer frame
+            bpy.context.scene.frame_set(fr)
+            bpy.context.view_layer.update()
+            dg_f = bpy.context.evaluated_depsgraph_get()
+            true_f = normalize_src(eval_world_verts(members, dg_f))
+            if not true_f:
+                continue
+            off_p, R_p = predict_pose(part, t_a)
+            pred = off_p + R_p @ c_local
+            c_true = sum(true_f, Vector()) / len(true_f)
+            delta = (pred - c_true).length
+            flag = "  <-- EXCEEDS 0.03m" if delta > 0.03 else ""
+            print(f"  PROBE {part['model']} t={t_a:.4f} (f{fr}): "
+                  f"{delta:.4f}m{flag}")
+            if worst is None or delta > worst[0]:
+                worst = (delta, fr, t_a, c_true, pred)
+        if worst is not None:
+            delta, fr, t_a, c_true, pred = worst
+            bpy.context.scene.frame_set(f_end)
+            bpy.context.view_layer.update()
+            dg_e = bpy.context.evaluated_depsgraph_get()
+            true_e = normalize_src(eval_world_verts(members, dg_e))
+            true_fold = src_at_start.get(part["model"])
+            if true_fold and true_e:
+                cf = sum(true_fold, Vector()) / len(true_fold)
+                ce = sum(true_e, Vector()) / len(true_e)
+                print(f"      worst: {delta:.4f}m @ t={t_a:.4f} "
+                      f"pred={tuple(round(x,3) for x in pred)} "
+                      f"true={tuple(round(x,3) for x in c_true)}")
+                print(f"      |true_worst - folded|={(c_true-cf).length:.3f}m "
+                      f"|true_worst - deployed|={(c_true-ce).length:.3f}m "
+                      f"|folded - deployed|={(ce-cf).length:.3f}m")

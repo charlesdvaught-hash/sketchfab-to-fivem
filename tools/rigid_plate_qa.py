@@ -80,9 +80,24 @@ def decompose_rigid_islands(mesh_obj, arm_obj):
             "part": dom_part,
             "pts": pts,
             "centroid": centroid,
+            "polys": [],
             "mins": Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
             "maxs": Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))),
         })
+    # weld-key -> island index, then map each polygon into its island as
+    # local vert indices (for BVHTree.FromPolygons enclosure tests).
+    key_island = {}
+    for isl in islands:
+        for wk in isl["verts"]:
+            key_island[wk] = isl["id"]
+    for poly in me.polygons:
+        wks = [key_idx[key_of[v]] for v in poly.vertices]
+        isl_id = key_island.get(wks[0])
+        if isl_id is None or any(key_island.get(w) != isl_id for w in wks):
+            continue  # boundary poly spanning islands: skip enclosure data
+        isl = islands[isl_id]
+        local = {wk: i for i, wk in enumerate(isl["verts"])}
+        isl["polys"].append([local[wk] for wk in wks])
     return islands
 
 def _find_partmap(src):
@@ -234,6 +249,49 @@ def _verts_in_box(pts, box):
                if all(box[0][k] <= p[k] <= box[1][k] for k in range(3)))
 
 
+_BVH_CACHE = {}
+
+
+def _island_bvh(isl):
+    """Lazy BVHTree over the island's recorded faces (world space)."""
+    key = id(isl)
+    if key not in _BVH_CACHE:
+        _BVH_CACHE[key] = (
+            BVHTree.FromPolygons(isl["pts"], isl["polys"])
+            if isl.get("polys") else None)
+    return _BVH_CACHE[key]
+
+
+def _vert_enclosed(bvh, p):
+    """True if p is enclosed by the BVH mesh: >=2 of 3 axes must hit faces
+    in BOTH directions. Open single-sided shells (Sketchfab armor plates)
+    fail one direction -> no false penetration behind an uncapped face."""
+    votes = 0
+    for axis in range(3):
+        d = Vector((0.0, 0.0, 0.0))
+        d[axis] = 1.0
+        hp = bvh.ray_cast(p, d)[0]
+        hm = bvh.ray_cast(p, -d)[0]
+        if hp is not None and hm is not None:
+            votes += 1
+    return votes >= 2
+
+
+def _verts_enclosed(pts, isl, box):
+    """Count of pts inside `box` AND truly enclosed by the island mesh.
+    Falls back to box-containment when the island has no face data."""
+    bvh = _island_bvh(isl)
+    if bvh is None:
+        return _verts_in_box(pts, box)
+    n = 0
+    for p in pts:
+        if not all(box[0][k] <= p[k] <= box[1][k] for k in range(3)):
+            continue
+        if _vert_enclosed(bvh, p):
+            n += 1
+    return n
+
+
 def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
     """Check 4 (isolation FK): swing each island-owning bone +/-angle about
     its local X (the flex axis). Islands on that bone AND its descendants
@@ -291,7 +349,8 @@ def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
                     if j in moved or rest_touch[i][j]:
                         continue
                     if _overlap_depth(box_i, rest_boxes[j]) > 0.02 and \
-                            _verts_in_box(moved_pts, rest_boxes[j]) >= 3:
+                            _verts_enclosed(moved_pts, islands[j],
+                                            rest_boxes[j]) >= 3:
                         anomalies.append(
                             f"FK_PENETRATION: bone {bn} {sgn*angle_deg:+.0f}deg "
                             f"moves island {islands[i]['id']} ({islands[i]['bone']}) "

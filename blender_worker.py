@@ -354,17 +354,40 @@ def fix_mesh_attributes(obj):
             fn(obj.data)
         except Exception as exc:
             warn(f"WARN_MESH_ATTR_FIX_FAILED:{fn_name}:{exc}")
-    # belt-and-suspenders: if the shader needed TexCoord0 but no layer carries
-    # that name yet, force-rename the first UV layer (GLTF imports call it
-    # "UVMap"; Sollumz only exports layers literally named TexCoordN).
+    # belt-and-suspenders: if the shader needs texcoord index 0 but no layer
+    # carries the name the exporter looks for, put a data-bearing layer in
+    # place. Ask the addon for its own convention -- Sollumz 2.9 expects
+    # "UVMap 0" (get_uv_map_name), older releases used "TexCoordN". Two bad
+    # states need fixing: no named layer at all (glTF imports name it
+    # "UVMap"), or the helpers created an EMPTY "UVMap 0" shell while the
+    # real UVs sit in another layer -- exporting that shell produces
+    # all-zero UVs and a flat-shaded model (humanoid).
     try:
         used = meshhelper.get_mesh_used_texcoords_indices(obj.data)
-        if 0 in used and obj.data.uv_layers and \
-                "TexCoord0" not in obj.data.uv_layers:
-            obj.data.uv_layers[0].name = "TexCoord0"
-            warn(f"WARN_UV_RENAME_FALLBACK:{obj.name}")
+        get_name = getattr(meshhelper, "get_uv_map_name", None)
+        name0 = get_name(0) if get_name else "TexCoord0"
+        uvl = obj.data.uv_layers
+        if 0 in used and uvl:
+            tgt = uvl.get(name0)
+            donor = next((l for l in uvl if l is not tgt), None)
+            if donor is not None:
+                if tgt is None:
+                    donor.name = name0
+                    warn(f"WARN_UV_RENAME_FALLBACK:{obj.name}")
+                elif _uv_layer_is_empty(tgt) and \
+                        not _uv_layer_is_empty(donor):
+                    uvl.remove(tgt)
+                    donor.name = name0
+                    warn(f"WARN_UV_RESCUE_EMPTY:{obj.name}")
     except Exception as exc:
         warn(f"WARN_UV_FALLBACK_FAILED:{obj.name}:{exc}")
+
+
+def _uv_layer_is_empty(layer):
+    for d in layer.data[:256]:
+        if abs(d.uv.x) > 1e-9 or abs(d.uv.y) > 1e-9:
+            return False
+    return True
 
 
 def find_texconv():
@@ -1593,8 +1616,9 @@ def motion_multi_part(job, mc):
             info = spin_info[gi]
             basis_q = (R @ info["W0"]).to_quaternion()
             if g.get("pivot_cfg"):
-                # workbench recipe pivot: already in normalized recipe space
-                pivot_n = Vector(g["pivot_cfg"])
+                # workbench recipe pivot: normalized recipe space -- must get
+                # the same body_off grounding shift the baked verts received
+                pivot_n = Vector(g["pivot_cfg"]) + body_off
             else:
                 pivot_n = N @ info["pivot_w"] + body_off
             axis_body = (R.to_3x3() @ info["axis_w"]).normalized()
@@ -1614,9 +1638,12 @@ def motion_multi_part(job, mc):
             basis_q = (R @ W0).to_quaternion()
             W1_rel = D_b_inv @ W1
             if g.get("pivot_cfg"):
-                # workbench recipe pivot: already in normalized recipe space
-                hinge_n = Vector(g["pivot_cfg"])
-                dep_n = hinge_n
+                # workbench recipe pivot: normalized recipe space -- must get
+                # the same body_off grounding shift the baked verts received;
+                # deployed pivot rides the driver's world travel delta
+                hinge_n = Vector(g["pivot_cfg"]) + body_off
+                dep_n = (hinge_n + N.to_3x3() @
+                         (W1_rel.to_translation() - hinge))
             else:
                 hinge_n = N @ hinge + body_off
                 dep_n = N @ W1_rel.to_translation() + body_off
@@ -2093,6 +2120,18 @@ def run_dump_preview(src, out_json, ped_donor, asset_type, target_height,
         sys.exit(1)
     apply_exclude_objects({"exclude_objects": excludes})
     purge_non_eval_junk()
+
+    # Measure parts in the same pose the compile bakes: imported clips park
+    # in muted NLA strips, so activate unambiguous per-object clips the same
+    # way motion sampling does, then evaluate at frame_window()'s f_start.
+    # Without this, workbench pivots/islands are stale vs the baked pose.
+    resolve_clip_playback({})
+    rng = None
+    for a in bpy.data.actions:
+        r = a.frame_range
+        rng = r if rng is None else (min(rng[0], r[0]), max(rng[1], r[1]))
+    bpy.context.scene.frame_set(int(round(rng[0])) if rng else
+                                bpy.context.scene.frame_start)
 
     donor_arm = None
     pre = set(bpy.context.scene.objects)

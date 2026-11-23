@@ -1105,6 +1105,7 @@ def process_source(input_path, blender, caps):
     # manifest twin ships). Advisory only -- report artifact, never a gate.
     render_script = os.path.join(ROOT, "render_check.py")
     render_warn = []
+    render_ok = set()
     for res_name, res_dir in shipped.items():
         try:
             rproc = subprocess.run(
@@ -1114,6 +1115,8 @@ def process_source(input_path, blender, caps):
                 capture_output=True, text=True, timeout=180, cwd=res_dir)
             if rproc.returncode != 0:
                 render_warn.append("WARN_RENDER_CHECK:" + res_name)
+            else:
+                render_ok.add(res_name)
             with open(os.path.join(res_dir, "render_check.log"), "w") as fh:
                 fh.write(rproc.stdout + "\n--- STDERR ---\n" + rproc.stderr)
         except (subprocess.TimeoutExpired, OSError):
@@ -1123,10 +1126,59 @@ def process_source(input_path, blender, caps):
         rp = os.path.join(res_dir, "build_report.json")
         with open(rp) as fh:
             rep = json.load(fh)
-        rep["checks_passed"].append("render_check")
+        # claim the check only when the render subprocess actually completed
+        rep["checks_passed"].append("render_check" if res_name in render_ok
+                                    else "render_check_failed")
         rep["warnings"] = warnings
         with open(rp, "w") as fh:
             json.dump(rep, fh, indent=2)
+
+    # --- pivot-offset audit: part .ydr verts are pivot-canonicalised, so a
+    # part's own bounding-box centre should sit near the drawable origin. A
+    # large residual means the declared pivot and the vertex data disagree --
+    # both the double-rotation and the missing body_off produced ~1.3 m
+    # centres on the buster nacelles. Advisory warning, never a gate.
+    for res_name, res_dir in shipped.items():
+        manj = os.path.join(res_dir, "assembly_manifest.lua.json")
+        if not os.path.isfile(manj):
+            continue
+        try:
+            with open(manj) as fh:
+                parts = (json.load(fh) or {}).get("parts") or []
+        except (OSError, ValueError):
+            continue
+        for p in parts:
+            yx = os.path.join(res_dir, "stream",
+                              str(p.get("model", "")) + ".ydr.xml")
+            if not os.path.isfile(yx):
+                continue
+            try:
+                txt = open(yx, encoding="utf8", errors="replace").read(8192)
+                bmin = re.search(r"BoundingBoxMin[^>]*", txt)
+                bmax = re.search(r"BoundingBoxMax[^>]*", txt)
+                if not (bmin and bmax):
+                    continue
+                def _v(tag):
+                    return [float(m) for m in re.findall(
+                        r'x="(-?[\d.]+)"\s*y="(-?[\d.]+)"\s*z="(-?[\d.]+)"',
+                        tag)[0]]
+                lo, hi = _v(bmin.group(0)), _v(bmax.group(0))
+                d = sum(((a + b) / 2.0) ** 2 for a, b in zip(lo, hi)) ** 0.5
+                if d > 0.15:
+                    warnings.append("WARN_PART_PIVOT_OFFSET:%s:%s:%.3f" % (
+                        res_name, p.get("model", "?"), d))
+            except (OSError, ValueError, IndexError):
+                continue
+    if any(w.startswith("WARN_PART_PIVOT_OFFSET") for w in warnings):
+        for res_name, res_dir in shipped.items():
+            rp = os.path.join(res_dir, "build_report.json")
+            if not os.path.isfile(rp):
+                continue
+            with open(rp) as fh:
+                rep = json.load(fh)
+            rep["warnings"] = warnings
+            with open(rp, "w") as fh:
+                json.dump(rep, fh, indent=2)
 
     # --- atomic publish: fully-built staging -> single rename per resource ----
     for res_name, res_dir in shipped.items():

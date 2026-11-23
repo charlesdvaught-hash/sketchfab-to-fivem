@@ -32,3 +32,34 @@ verts now `D @ B⁻¹ @ (v − hinge)`, emitted basis compensated by `D⁻¹`
 for `rest_rot`). Folded pose now matches REFERENCE_buster.jpg.
 Root cause: verts carried baked world rotation W0 while the manifest
 also emitted W0 as folded/initial_rot -> applied twice.
+
+## RESOLVED (round 2) — pivot/body offset + UV export + tooling
+
+`buster_FIX2_*.png` — after fixing `pivot_cfg` missing the `body_off`
+grounding shift (spin+hinge branches) and hinge `dep_n` losing the
+driver's travel delta. Measured part `.ydr.xml` bbox centres went from
+~1.3 m (off-origin, rotor would ORBIT on spin) to ~0.01 m. Verified by
+`tools/diagnose_trs.py` (PASS2/3: internal offset + lever-arm swing).
+Manifest now bilaterally symmetric (thruster attach x = +0.803/-0.891).
+
+`humanoid_FIXED_textured.png` — the grey render was NOT a missing
+texture; the exported `.ydr` carried all-zero UVs. Sollumz 2.9 expects
+the layer name `UVMap 0`; its helper created an empty shell under that
+name while the real UVs sat in `UVMap`, and our fallback renamed the
+real layer to `TexCoord0` (a name 2.9 doesn't read). New rescue path
+(`WARN_UV_RESCUE_EMPTY`) drops the empty shell and renames the
+data-bearing layer. Binary `.ydr` now shows UV range 0.028-0.974.
+
+New tools (adapted from an external review deliverable):
+- `tools/diagnose_trs.py` — 3-pass source-vs-export check
+  (muted-vs-active NLA, .ydr internal offset, manifest lever arm)
+- `tools/rigid_plate_qa.py` — rigid-bone ped QA: welded island purity,
+  cross-lateral bind detection, seam adjacency vs skeleton hop distance,
+  FK-isolation penetration sweep. Ran on military_mech: flagged a
+  crotch-region cluster bound to SKEL_R_Thigh on the +x side
+  (12 CROSS_LATERAL_BIND, 180 DISJOINT_KINEMATIC_SEAM hits).
+
+Also: `--dump-preview` now activates clips (resolve_clip_playback) so
+workbench pivots match the compile pose; render_check gate is honest
+(`render_check_failed` recorded, never claimed); new advisory gate
+`WARN_PART_PIVOT_OFFSET` fires when a part .ydr bbox centre >0.15 m.

@@ -138,7 +138,7 @@ def import_ydr(path):
                 return n, nt
             if n.type == 'GROUP' and n.node_tree:
                 r = find_tex_image(n.node_tree)
-                if r:
+                if r[0] is not None:
                     return r
         return None, None
 

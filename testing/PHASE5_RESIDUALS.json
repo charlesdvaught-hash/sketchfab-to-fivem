@@ -2,7 +2,7 @@
   "report_metadata": {
     "repository": "https://github.com/charlesdvaught-hash/sketchfab-to-fivem",
     "phase": "Phase 5 — Residual Audit Fixes & Verification",
-    "commits": ["872b08f (code checkpoint)", "docs+evidence commit pending"],
+    "commits": ["872b08f (code checkpoint)", "b9611ca (verified docs+evidence)"],
     "summary": "Implements Argon's Phase-4 residual audit (F-01..F-05). Whole-group weighted Kabsch fit halves the buster leg PASS4 plateau (0.25m -> 0.10m worst probe); WARN_NONRIGID_CHAIN now reports interior_dev/endpoint_dev with split recommendations; FK_SCISSOR_CLIP surfaces 41 real tri-tri joint crossings on the mech that vert-enclosure was structurally blind to; motion-progress repose ramp + PASS4/PASS3c truth conjugation verified phantom-free on a synthetic 15deg rest_rot; rigid-SE3 carrier relativization; chained-quat manifest field. PASS3b untouched (0.0000-0.0001).",
     "visual_evidence": {
       "phase5_renders": ["testing/buster_PHASE5_folded_iso.png", "testing/buster_PHASE5_mid_iso.png", "testing/buster_PHASE5_deployed_iso.png"],

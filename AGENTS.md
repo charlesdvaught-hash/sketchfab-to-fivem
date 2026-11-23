@@ -2,7 +2,7 @@
 
 Headless Sketchfab → FiveM prop converter for the CliffordWon server. **Zero
 Python dependencies (stdlib only), zero network calls** except the optional
-Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.3.0). Motion modes:
+Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.4.0). Motion modes:
 `MOTION_SPEC.md`. `README.md` is the living file map; `REVIEW_BUNDLE.md` is a
 frozen snapshot — don't edit it.
 

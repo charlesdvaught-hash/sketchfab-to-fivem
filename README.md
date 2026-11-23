@@ -6,7 +6,7 @@ goes in, a ready-to-`ensure` FiveM resource comes out — or the job lands in
 everything runs locally with **zero Python dependencies** (stdlib only) and
 **zero network calls** — no hosted converter is ever contacted.
 
-The contract of record is `PIPELINE_SPEC.json` (v1.1.0). `REVIEW_BUNDLE.md` is
+The contract of record is `PIPELINE_SPEC.json` (v1.4.0). `REVIEW_BUNDLE.md` is
 a frozen point-in-time review snapshot — treat this README as the living map
 and the spec as the normative rules. `MOTION_SPEC.md` covers the motion modes.
 
@@ -31,7 +31,7 @@ and the spec as the normative rules. `MOTION_SPEC.md` covers the motion modes.
 | `inspect_sollumz.py` | Probe: versions, operators, providers, RSC version constants, capability flags → `build/toolchain_caps.json` | Re-run after any Blender/Sollumz change |
 | `test_harness.py` | End-to-end regression suite (synthetic + rigged fixtures, gates, quarantine paths) | Run after any worker/orchestrator change |
 | `render_check.py` | Runs **inside** Blender post-publish. Re-imports each emitted `.ydr.xml` via Sollumz, prints `[MESH]` UV/color counts, renders iso/side/top PNGs + `_assembly_{folded,deployed}` composites from `assembly_manifest.lua.json` | Visual verification; advisory only (`WARN_RENDER_CHECK`) |
-| `PIPELINE_SPEC.json` | Normative contract v1.1.0: EC_01–EC_10, gates, sidecar schema, error/warning codes | The rules live here |
+| `PIPELINE_SPEC.json` | Normative contract v1.4.0: EC_01–EC_10, gates, sidecar schema, error/warning codes | The rules live here |
 | `MOTION_SPEC.md` | Motion-mode contracts (snapshot, multi-part, quarantined vehicle modes, conventions) | Motion work |
 | `reference/RIG_WORKBENCH.md` | Rig & Animation Workbench contract: `preview_scene.json` / `rig_recipe.json` schemas, capture modes (`clip_slice`, `drone_reactive_flight`), multi-instance naming (`<asset>_<role>_<idx>`) | Rig workbench + recipe changes |
 | `reference/RAGE_SOLLUMZ_CONTRACTS.md` | Measured Blender-5.2/Sollumz-2.9 invariants the worker relies on (attribute naming, bone math, NLA, transform contracts) | Before trusting any external Blender/Sollumz doc |

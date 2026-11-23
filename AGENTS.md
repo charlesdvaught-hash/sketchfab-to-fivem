@@ -18,13 +18,42 @@ frozen snapshot — don't edit it.
 | `autorig_check.py` | host | Auto-rig donor-wrap verification |
 | `dashboard.py` | host | Web UI on `:8420` — see UI section below |
 | `test_harness.py` | host | E2E regression suite — run after worker/orchestrator changes |
+| `tools/diagnose_trs.py` | inside Blender | Post-publish TRS diagnostic on a shipped resource — PASS1 (muted/active NLA), PASS2 (.ydr part-center offset), PASS3 (lever-arm), PASS3b (indexed/chamfer max-vertex manifest reconstruction), PASS4 (mid-pose lerp vs true source frame) |
+| `tools/rigid_plate_qa.py` | inside Blender | Welded-island audit on ped `.ydd`s — `CROSS_LATERAL_BIND`, `DISJOINT_KINEMATIC_SEAM` (>1-hop), `FK_PENETRATION`, `PART_BONE_MISMATCH`; island→part attribution via `stream/<asset>.partmap.json` |
 | `bin/texconv.exe` | — | Vendored PNG→DDS converter |
 | `vendor/` | — | Vendored CSS kits (see UI section) |
 
 Directories: `inbox/` (drop files), `work/` (per-job scratch, deleted on publish),
 `quarantine/<job>/` (failures + `failure_report.json`), `donor/` (rig donors),
 `build/` (registry, toolchain caps, `resources/[sketchfab_props]/<name>/` output),
-`testserver/` (runtime check scratch).
+`testing/` (render evidence + `PHASE2_DIAGNOSIS.md` / `PHASE3_RESULTS.md` audit
+trail + `REFERENCE_*.jpg` Sketchfab thumbs), `reference/` (RIG_WORKBENCH.md +
+RAGE_SOLLUMZ_CONTRACTS.md + GEOMETRY_TELEMETRY_AND_XRAY.md + GUIDED_UX_SPEC.md),
+`.devin/skills/` (agent skill packs — see below), `testserver/` (runtime check
+scratch).
+
+## Agent skills (`.devin/skills/`)
+
+Skill packs are committed to the repo so any agent that opens it gets them.
+Two tiers — the **canonical** pipeline skill owns this toolchain; the vendored
+`blender-*` packs are generic-Blender reference material it **overrides on any
+conflict**.
+
+| Skill | What it's for |
+|---|---|
+| `sketchfab-pipeline` | **Canonical measured invariants** — Sollumz 2.9 `UVMap 0`/`Color 1` naming + empty-shell rescue, Blender 5.2 `Bone.matrix` (3×3) vs `matrix_local` (4×4), NLA muted strips + `is_solo` + depsgraph staleness, Contract A transform math, hemisphere slerp, the QA gate run order. Invoke before touching `blender_worker.py`, `render_check.py`, `tools/`, or diagnosing any export defect. |
+| `blender-asset-validation` | Source-geometry health gate — `scripts/inspect_asset.py` headless → non-manifold edges, degenerate faces, connected components, world bounds. Fills the "is the source junk" gap the binary gates can't see. Verified under 5.2.1. |
+| `blender-asset-qa` | Post-build mesh review — z-fighting, normals, dupes, weights, multi-angle render sheets. Complements `rigid_plate_qa.py`. |
+| `blender-character-rigging` | `bind_mesh.py` = heat weights with voxel-proxy fallback for non-manifold donors (autorig candidate); `stress_poses.py` deformation frames. **CAVEAT: `rig_check.py` profiles are unity/unreal/roblox only — no GTA skeleton.** |
+| `blender-animation` | NLA/slotted actions, F-curves, mocap retargeting, clip baking. |
+| `blender-export-pipelines` | Generic engine export presets — reference only; Sollumz stays the RAGE path. |
+| `blender-core` | bpy headless/MCP basics + 5.x API deltas. |
+
+Installed outside this repo: `fivem-assets` (user-global; vanilla bone tags,
+anim dicts, clothing/fragment/LOD rules — consult before RAGE-facing ped work),
+`fivem-qbox` (CliffordWon `.devin/skills/`; qbx_core/ox_* conventions for the
+generated resource's Lua side), `consult` (user-global; the second-opinion
+review loop documented in `testing/`).
 
 ## dashboard.py — UI architecture (session 2026-11-22)
 
@@ -193,3 +222,13 @@ python dashboard.py            # http://127.0.0.1:8420
 python test_harness.py         # full E2E (needs Blender + Sollumz)
 python orchestrator.py --file model.glb
 ```
+
+## QA gate order (after any transform/export change)
+
+1. `python test_harness.py` — must print `ALL CHECKS PASSED`.
+2. `tools/diagnose_trs.py <res_dir>` — PASS1/2/3 ≈0; PASS3b max-vertex ≈0;
+   PASS4 = the known 2-pose-lerp gap (see MOTION_SPEC.md).
+3. `tools/rigid_plate_qa.py <path/to.ydd>` — weld verts first; flags
+   `CROSS_LATERAL_BIND`, `DISJOINT_KINEMATIC_SEAM` (>1-hop only — 1-hop is a
+   legitimate joint), `FK_PENETRATION`, `PART_BONE_MISMATCH` (via partmap).
+4. Compare `render_check` PNGs vs `testing/REFERENCE_*.jpg` Sketchfab thumbs.

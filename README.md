@@ -34,6 +34,13 @@ and the spec as the normative rules. `MOTION_SPEC.md` covers the motion modes.
 | `PIPELINE_SPEC.json` | Normative contract v1.1.0: EC_01–EC_10, gates, sidecar schema, error/warning codes | The rules live here |
 | `MOTION_SPEC.md` | Motion-mode contracts (snapshot, multi-part, quarantined vehicle modes, conventions) | Motion work |
 | `reference/RIG_WORKBENCH.md` | Rig & Animation Workbench contract: `preview_scene.json` / `rig_recipe.json` schemas, capture modes (`clip_slice`, `drone_reactive_flight`), multi-instance naming (`<asset>_<role>_<idx>`) | Rig workbench + recipe changes |
+| `reference/RAGE_SOLLUMZ_CONTRACTS.md` | Measured Blender-5.2/Sollumz-2.9 invariants the worker relies on (attribute naming, bone math, NLA, transform contracts) | Before trusting any external Blender/Sollumz doc |
+| `reference/GEOMETRY_TELEMETRY_AND_XRAY.md` | Geometry telemetry + x-ray diagnosis design notes | Workbench/x-ray work |
+| `reference/GUIDED_UX_SPEC.md` | Guided-cleanup UX spec for the workbench | UI flow changes |
+| `tools/diagnose_trs.py` | Blender-side TRS diagnostic run on a **shipped** resource: PASS1 muted-vs-active NLA divergence, PASS2 `.ydr` internal part-center offset, PASS3 lever-arm swing, PASS3b max-vertex manifest-vs-source reconstruction (indexed + chamfer), PASS4 mid-pose lerp-vs-source-truth | Verifying Contract A on real builds; chasing transform/motion bugs |
+| `tools/rigid_plate_qa.py` | Welded-island QA on ped `.ydd`s: `CROSS_LATERAL_BIND`, `DISJOINT_KINEMATIC_SEAM`, `FK_PENETRATION`, `PART_BONE_MISMATCH` (uses `<asset>.partmap.json` for island→part attribution) | Verifying rigid-plate ped binds (mechs, armor) |
+| `testing/` | Render evidence + audit trail: `PHASE2_DIAGNOSIS.md` (Phase-2 audit), `PHASE3_RESULTS.md` (Phase-3 fixes + measured results), `REFERENCE_*.jpg` Sketchfab previews for render comparison | Reviewing QA history; comparing renders |
+| `.devin/skills/` | Agent skill packs: `sketchfab-pipeline` (canonical invariants + QA order) + vendored `blender-*` reference packs — see "Agent skills" in AGENTS.md | Any agent working on the converter |
 | `REVIEW_BUNDLE.md` | Frozen review snapshot | Historical; don't edit |
 | `bin/texconv.exe` | Vendored DDS converter | Replace only with same-CLI builds |
 
@@ -189,12 +196,32 @@ jobs **currently quarantine at publish time** with `ERR_PED_APPAREL_YMT_UNSUPPOR
 | manifest | every quoted resource path resolves; no `lua54` | `ERR_MANIFEST_UNRESOLVED` |
 | lua | generated `.lua` loadfile-checked (if `lua` on PATH) | `ERR_LUA_SYNTAX` / `WARN_LUA_SYNTAX_UNVERIFIED` |
 
+### QA tooling (deeper than the gates)
+
+The binary-format gates prove the files are structurally RAGE — they can't see
+bad transforms, wrong bone binds, or junk source geometry. Two tools run inside
+Blender against the *published* output for that:
+
+- `tools/diagnose_trs.py <res_dir>` — reconstructs the manifest pose from the
+  shipped `.ydr` data and compares it to the evaluated source animation at
+  `f_start` and the true mid-frame. Catches pivot/contract bugs at millimetre
+  precision (PASS3b reads `0.0000m` on a correct build).
+- `tools/rigid_plate_qa.py <path/to.ydd>` — welds the exported ped dictionary
+  and audits islands: cross-lateral binds, kinematic seams >1 joint apart,
+  FK penetration, part↔bone mismatches (attributed via `partmap.json`).
+
+Run order after any transform/export change: `test_harness.py` →
+`diagnose_trs.py` → `rigid_plate_qa.py` → compare `render_check` PNGs against
+`testing/REFERENCE_*.jpg`. See `.devin/skills/sketchfab-pipeline/SKILL.md` for
+the full gate contract.
+
 ## Publish output
 
 ```
 build/resources/[sketchfab_props]/<name>/
 ├── fxmanifest.lua            # prop: DLC_ITYP_REQUEST; ped: bare; apparel: meta+files{}
 ├── stream/                   # .ydr|.ytyp|.ytd|.ydd + .xml audit sidecars
+│   ├── <asset>.partmap.json  # ped w/ parts: pre-join island→part map for rigid_plate_qa
 │   └── (apparel: stream/<fullDlc>/<fullDlc>^comp_000_u.ydd ...)
 ├── <motion manifest>.lua     # motion modes only
 ├── <ped>_<ped>_<dlc>_shop.meta   # apparel only

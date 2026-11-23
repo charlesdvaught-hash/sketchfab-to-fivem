@@ -176,6 +176,23 @@ its chosen `rotationOrder` — this pipeline does not claim native compatibility
 and no FXServer runtime validation has been performed (`runtime_validation =
 "NOT_PERFORMED"` in every build_report).
 
+### Manifest consumer contract (what a runtime must assume)
+
+- **Rotations are absolute-basis, not deltas.** `folded_rot`/`deployed_rot`/
+  `initial_rot` all share one frame; the part verts already carry `rest_rot`
+  baked into canonicalization (Contract A — see `RAGE_SOLLUMZ_CONTRACTS.md`).
+  Do NOT compose `rest_rot` onto manifest rotations.
+- **Hemisphere-normalize before slerp**: `dot(q0,q1) < 0 → negate q1`.
+  `Euler.to_quaternion()` can emit antipodal pairs → long-path spin otherwise.
+- **Mid-pose is a lerp, not ground truth.** Between the two declared poses a
+  consumer draws lerp+slerp — that is what `_assembly_mid_*` renders show. The
+  source clip can deviate: PASS4 measured 1.75–2.13 m mid-frame error on
+  buster's hinge parts (one is already 98% deployed at t=0.5; the other
+  overshoots the endpoint ~0.67 m and settles back — staggered sub-clip
+  timing a 2-pose manifest cannot express). Open design question for future
+  spec versions: quantized intermediate keyframes (e.g. 5 stops at
+  0/.25/.5/.75/1) vs a `parent_part` hierarchy.
+
 ## `ped_clothing` (method 3 — skinned)
 
 Not prop motion: this mode runs the ped pipeline — one armature + skinned

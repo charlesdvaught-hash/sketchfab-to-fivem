@@ -67,12 +67,19 @@ docs elsewhere describe other versions.
 1. `python test_harness.py` — must print `ALL CHECKS PASSED`.
 2. `tools/diagnose_trs.py` on the shipped resource — PASS1 muted/active
    NLA divergence ≈0, PASS2 `.ydr` part centers ≈0 (<0.05 m),
-   PASS3 lever-arm swing ≈0.
+   PASS3 lever-arm swing ≈0, PASS3b indexed/chamfer max-vertex
+   manifest-vs-source reconstruction ≈0 (0.0000 m on buster = Contract A
+   exact), PASS4 mid-pose manifest-lerp vs true source frame (nonzero =
+   the known 2-pose gap — staggered sub-clip timing, ~2 m on buster
+   hinges; documented in MOTION_SPEC.md).
 3. `tools/rigid_plate_qa.py` on ped `.ydd` — **weld verts first** (raw
    `.ydd` split normals = 1 island/face); flags: `CROSS_LATERAL_BIND`
    (±x geometry on contralateral `SKEL_L/R_*` = real defect),
    `DISJOINT_KINEMATIC_SEAM` (welded edge, bones >1 hop apart — 1 hop is
-   a legitimate joint, do NOT flag), FK penetration.
+   a legitimate joint, do NOT flag), FK penetration (vert-containment,
+   not AABB grazing), `PART_BONE_MISMATCH` (islands attributed via
+   `stream/<asset>.partmap.json` — `__part_*` vgroups don't survive
+   `.ydd` export).
 4. Assembly renders vs `testing/REFERENCE_*.jpg` Sketchfab thumbs.
 - `WARN_PART_PIVOT_OFFSET` (>0.15 m `.ydr` bbox-center) = pivot bug.
 - `WARN_RENDER_CHECK` is advisory only; `render_check` must only appear
@@ -80,6 +87,29 @@ docs elsewhere describe other versions.
 
 ## Pointers
 
-`AGENTS.md` (file map) · `reference/RAGE_SOLLUMZ_CONTRACTS.md` ·
+`AGENTS.md` (file map + skills table) · `reference/RAGE_SOLLUMZ_CONTRACTS.md` ·
 `reference/RIG_WORKBENCH.md` (workbench data contract) ·
-`testing/PHASE2_DIAGNOSIS.md` (audit history + evidence links).
+`testing/PHASE2_DIAGNOSIS.md` + `testing/PHASE3_RESULTS.md` (audit history +
+measured results + evidence links).
+
+## Installed reference packs (sibling skills, MIT)
+
+Reference material installed 2026-11-22 — generic-Blender guidance, NOT
+Sollumz/FiveM-aware. Our invariants above override them on any conflict.
+
+- `blender-asset-validation/` (ifbars/blender-agent-studio @18330d1):
+  `scripts/inspect_asset.py` runs on source `.glb` pre-conversion — per-mesh
+  non-manifold edges, degenerate faces, loose elements, connected
+  components, world bounds. Verified working headless under 5.2.1.
+  `render_evidence.py` = standardized hero + 6-view + contact sheet.
+  Its `references/quality-gates.md` has a `gate/defect/warning` taxonomy
+  worth mirroring in failure reports.
+- `blender-character-rigging/` + siblings `blender-core`, `blender-asset-qa`,
+  `blender-animation`, `blender-export-pipelines` (EL4CTEO/blender-skills
+  @1a1cc6c): `bind_mesh.py` = heat weights with automatic **voxel-proxy
+  fallback** for non-manifold meshes (donor/autorig path candidate);
+  `stress_poses.py` = deformation stress frames (complements
+  `rigid_plate_qa.py` FK checks); `rig_check.py` profiles are
+  unity/unreal/roblox only — **no GTA skeleton**, don't run it expecting
+  SKEL_* validation. `blender-core/references/api-changes-5x.md` = more
+  5.0 API deltas beyond the ones measured above.

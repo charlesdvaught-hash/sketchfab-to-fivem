@@ -1,5 +1,5 @@
 {
-  "spec_version": "1.1.0",
+  "spec_version": "1.2.0",
   "project_name": "sketchfab_to_qbox_prop_pipeline",
   "objective": "Fully headless, zero-GUI pipeline that ingests Sketchfab 3D archives/files, normalizes geometry/materials/collisions, converts to GTA V (.ydr/.ytyp props, .ydd skinned drawable dictionaries) via Sollumz in Blender background mode, and outputs ready-to-ensure FiveM Qbox resources. v1.1.0 adds ped_clothing, generation-aware export, apparel-pack layout, toolchain probing, hardened archive/input validation, and the external-converter exclusion policy.",
   "hard_constraints": [
@@ -326,13 +326,21 @@
     "WARN_SHAPE_KEYS_REMOVED_FOR_CLOTHING_FIX",
     "WARN_AUTO_SPIN_PART", "WARN_HIGH_ROTATION_HINGE",
     "WARN_CARRIER_MOTION_RELATIVIZED", "WARN_AMBIGUOUS_ACTIONS",
-    "WARN_EXCLUDED_OBJECT", "WARN_SPIN_PIVOT_FALLBACK"
+    "WARN_EXCLUDED_OBJECT", "WARN_SPIN_PIVOT_FALLBACK",
+    "WARN_UV_RESCUE_EMPTY", "WARN_UV_RENAME_FALLBACK",
+    "WARN_UV_EMPTY_NORESCUE", "WARN_UV_FALLBACK_FAILED",
+    "WARN_MESHHELPER_IMPORT", "WARN_MESH_ATTR_FIX_FAILED",
+    "WARN_COLOR_RENAME_FALLBACK", "WARN_COLOR_RESCUE_EMPTY",
+    "WARN_COLOR_INIT_NEUTRAL", "WARN_COLOR_FALLBACK_FAILED",
+    "WARN_PART_PIVOT_OFFSET", "WARN_RENDER_CHECK"
   ],
   "deliverables_required_from_coder": [
     "1. inspect_sollumz.py: probe -> build/toolchain_caps.json (versions, operators, providers, rsc_versions, capabilities, deps).",
     "2. blender_worker.py: EC_02-EC_10 + Sollumz export (prop + ped) + generation-aware target_versions + readback.",
     "3. orchestrator.py: sidecar validation, safe zips, toolchain recording, gates, apparel emitters, both-gen publish, registry/report.",
     "4. test_harness.py: end-to-end regression suite incl. rigged GLB fixture.",
-    "5. dashboard.py: reason map for all codes + asset-type/generation selectors."
+    "5. dashboard.py: reason map for all codes + asset-type/generation selectors.",
+    "6. tools/diagnose_trs.py + tools/rigid_plate_qa.py: post-publish QA diagnostics (TRS reconstruction, rigid-plate ped audit).",
+    "7. stream/<asset>.partmap.json: ped-with-parts sidecar (pre-join island->part centroid/bbox/role/assigned_bone) consumed by rigid_plate_qa."
   ]
 }

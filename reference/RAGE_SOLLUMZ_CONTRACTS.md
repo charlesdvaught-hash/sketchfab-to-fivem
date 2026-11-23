@@ -111,3 +111,38 @@ Client resource listens on resource start → for each archetype in
 manifest.json: RequestModel (3s timeout), GetModelDimensions (non-zero,
 non-NaN), CreateObjectNoOffset + DoesEntityExist, optional screenshot,
 delete, report back to orchestrator / write file via server event.
+
+## 9. Measured toolchain invariants (Phase 3)
+
+Verified on the installed toolchain (Blender 5.2.1 + Sollumz 2.9.0) —
+these override any external doc written for other versions. Canonical
+copy lives in `.devin/skills/sketchfab-pipeline/SKILL.md`.
+
+- **Sollumz 2.9 attribute naming**: UV layers must be `UVMap 0`
+  (zero-indexed, with a space — `get_uv_map_name(i)` → `f"UVMap {i}"`);
+  vertex-color attrs are `Color 1`, `Color 2`, … (**1-indexed** —
+  `get_color_attr_name(i)` → `f"Color {i+1}"`, NOT `Color 0`).
+  Both helpers create EMPTY shells under the expected name while real
+  data sits under e.g. `UVMap`/`COLOR_0` — detect "empty" by all-zero
+  coords, not bbox span; rescue = drop shell, rename donor, retarget
+  `ShaderNodeUVMap.uv_map` (empty OR dangling names).
+- **Blender 5.2 `Bone.matrix` is 3×3** parent-relative (was 4×4) —
+  `bone.matrix_local` is the 4×4 armature-space rest matrix.
+  FK delta: `pose_bone.matrix @ bone.matrix_local.inverted()`.
+- **glTF NLA import parks clips muted on tracks**, not `ad.action` —
+  and a `track.is_solo` suppresses the active action even after unmute.
+  `resolve_clip_playback` must unmute strips+tracks, clear `is_solo`,
+  set `ad.action`, then `scene.frame_set(f_start)`.
+- **`bound_box` is stale** after `mesh.data.transform(M)` until
+  `view_layer.update()` — reading it early fed a +1.315 m `body_off`
+  float (testing/PHASE3_RESULTS.md). Always update the view layer
+  between transforming mesh data and reading bounds.
+- **A fetched depsgraph follows scene state** — hold `dg` across a
+  `frame_set` and later reads silently sample the new frame. Re-fetch
+  `evaluated_get(depsgraph)` after each `frame_set`.
+- **Quaternion slerp needs hemisphere normalization** —
+  `Euler.to_quaternion()` can emit antipodal pairs → `dot(q0,q1)<0`
+  must negate `q1` or the interpolation takes the long path.
+- **Vertex color API**: use `mesh.color_attributes` (5.2), not legacy
+  `vertex_colors`; byte-color writes go through `color_srgb` in 0–1
+  (Sollumz's own `add_mesh_color_attribute` does the same).

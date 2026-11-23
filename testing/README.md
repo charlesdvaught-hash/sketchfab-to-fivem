@@ -79,3 +79,32 @@ workbench pivots match the compile pose; render_check gate is honest
   (binding defect, invisible in a static render).
 - `render_check.py` now also renders .ydd.xml peds and exits nonzero
   when a resource has nothing to render (no more vacuous passes).
+
+## RESOLVED (Phase 3) — see PHASE3_RESULTS.md
+
+Round 3 of external review (Argon). Fixes + measured results are in
+`PHASE3_RESULTS.md`; the deltas on what Phase 2 documented:
+
+- **Stale `bound_box` float bug** — `world_bbox` read pre-transform
+  bounds after `data.transform(N)` without a `view_layer.update()`,
+  so `body_off` lifted buster +1.315 m off the ground. Fixed; body
+  `.ydr` now grounds at `min.z = 0.0`, `attach_offset` == recipe pivot.
+- **Contract A verified exactly** — new PASS3b in `diagnose_trs.py`
+  measures max-vertex manifest-vs-source error: **0.0000 m** on all four
+  buster moving parts. (The tool is now 5 passes, not 3 — PASS1/2/3 +
+  PASS3b indexed/chamfer max-vertex + PASS4 mid-pose lerp-vs-source.)
+- **Mech cross-lateral cluster FIXED, not just flagged** — `Cube.006`
+  relocked `SKEL_R_Thigh` → `SKEL_Pelvis`; `CROSS_LATERAL_BIND` 12→0.
+  `nearest_bone` now derives the lateral sign from the armature rest
+  pose (not hardcoded +x=L) and midline-straddling bboxes lock to
+  `SKEL_Pelvis`. Islands are attributed to source parts via the new
+  `stream/<asset>.partmap.json` (the `__part_*` vgroups don't survive
+  `.ydd` export).
+- **FK_PENETRATION** 1373→54 (real vert-containment, advisory);
+  **DISJOINT_KINEMATIC_SEAM** 180→121 (all 2-hop joint-adjacency noise).
+- **PASS4 measured the real motion gap** — buster hinge parts hit
+  1.75–2.13 m mid-frame error: staggered sub-clip timing, not arc sag.
+  The 2-pose manifest can't express it; the open design question
+  (quantized keyframes vs `parent_part` hierarchy) is in MOTION_SPEC.md.
+- Plus: hemisphere-slerp guard, NLA `is_solo` clear, `Color 1`
+  attribute rescue (1-indexed — not `Color 0`), wider UV retarget.

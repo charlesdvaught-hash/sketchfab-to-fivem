@@ -1,0 +1,120 @@
+{
+  "report_metadata": {
+    "repository": "https://github.com/charlesdvaught-hash/sketchfab-to-fivem",
+    "phase": "Phase 5 — Residual Audit Fixes & Verification",
+    "commits": ["872b08f (code checkpoint)", "docs+evidence commit pending"],
+    "summary": "Implements Argon's Phase-4 residual audit (F-01..F-05). Whole-group weighted Kabsch fit halves the buster leg PASS4 plateau (0.25m -> 0.10m worst probe); WARN_NONRIGID_CHAIN now reports interior_dev/endpoint_dev with split recommendations; FK_SCISSOR_CLIP surfaces 41 real tri-tri joint crossings on the mech that vert-enclosure was structurally blind to; motion-progress repose ramp + PASS4/PASS3c truth conjugation verified phantom-free on a synthetic 15deg rest_rot; rigid-SE3 carrier relativization; chained-quat manifest field. PASS3b untouched (0.0000-0.0001).",
+    "visual_evidence": {
+      "phase5_renders": ["testing/buster_PHASE5_folded_iso.png", "testing/buster_PHASE5_mid_iso.png", "testing/buster_PHASE5_deployed_iso.png"],
+      "reference": "testing/REFERENCE_buster.jpg",
+      "mount_gap_check": "deployed render compared against testing/buster_PHASE4_deployed_iso.png -- hip mounts identical, no proximal-joint gap introduced by the 3x proximal-weighted fit",
+      "render_note": "renders are vertex-colour flat-shaded assembly checks (render_check convention), not textured output"
+    }
+  },
+  "measured_results": {
+    "buster_pass4_worst_probe_m": {
+      "leg_l": {"phase4": 0.25, "phase5": 0.1015, "at_t": 0.3833},
+      "leg_r": {"phase4": 0.25, "phase5": 0.1080, "at_t": 0.3833},
+      "single_member_hinges_max": {"phase4": 0.015, "phase5": 0.0146}
+    },
+    "buster_pass3b_max_vertex_err_m": {"all_parts": "<=0.0001 (unchanged, canonical round-trip exact)"},
+    "warn_nonrigid_chain": {
+      "leg_f": {"interior_dev": 0.7030, "endpoint_dev": 0.4731, "kind": "spin"},
+      "leg_l": {"interior_dev": 0.6711, "endpoint_dev": 0.3104},
+      "leg_r": {"interior_dev": 0.6708, "endpoint_dev": 0.3955}
+    },
+    "pass3c_deployed_per_member_vert_dev_m": {
+      "leg_l": {"proximal": 0.19, "distal_max": 0.5445, "worst_member": "L_P7_leg_0"},
+      "leg_r": {"proximal": 0.18, "distal_max": 0.6366, "worst_member": "R_P7_leg_0"}
+    },
+    "synthetic_rest_rot_15deg_panel_l": {
+      "repose_ramp": "0 -> 1.0 completes at t=0.270 (deployment-complete, no stationary-tail twist)",
+      "pass4_probes": "0.0000-0.0146 m -- no phantom ramp error",
+      "linear_in_t_would_show": "~t*15deg phantom twist through t in [0.27,1.0]"
+    },
+    "mech_rigid_qa": {
+      "CROSS_LATERAL_BIND": 0,
+      "FK_PENETRATION": 0,
+      "FK_SCISSOR_CLIP": 41,
+      "DISJOINT_KINEMATIC_SEAM": 121
+    },
+    "test_harness": "ALL CHECKS PASSED"
+  },
+  "findings_resolved": [
+    {
+      "id": "F-01",
+      "status": "implemented_fit_and_warn",
+      "what": "Multi-member groups now drive from a whole-group weighted Kabsch delta T'_k (V_rel(0)->V_rel(k), det<0 reflection fix, driver member weight 3x normalized) instead of the single driver matrix. Endpoint epsilon-snap (<1e-4 m/rad) keeps rigid-group manifests bit-identical; fitted groups emit fit-based deployed_* matching keyframes[-1] exactly.",
+      "measured": "leg_l/r worst PASS4 probe 0.25m -> 0.10-0.11m; residual is permanent non-rigidity, not interpolation error",
+      "remaining": "endpoint_dev 0.31-0.47m on leg chains is a permanent deployed-pose error inside the joined .ydr -- only fixable by part_map split (max_parts headroom needed)"
+    },
+    {
+      "id": "F-02",
+      "status": "implemented",
+      "what": "FK_SCISSOR_CLIP in rigid_plate_qa.fk_sweep_penetration: lazy posed BVHTree per (pose, moved island), BVHTree.overlap tri-tri pairs vs rest islands under the same rest_touch + 0.02m AABB prefilter. _vert_enclosed unchanged (54->0 open-shell filtering preserved).",
+      "measured": "41 crossings on the mech, all at plausible joints: calf->thigh at knee (+25deg), thigh->pelvis, foot->foot",
+      "open": "41 scissor clips need design review -- knee/hip plate interpenetration at 25deg flex may be real rig clipping (would show in-game) or acceptable design overlap; foot-vs-foot at +25deg suggests narrow rest stance"
+    },
+    {
+      "id": "F-03",
+      "status": "implemented_verified_synthetic",
+      "what": "rest_rot repose ramp parameterized by motion progress s(k)=pose_dist(T'_k)/pose_dist(T'_last) instead of clock t; per-keyframe 'repose' + part 'rest_rot_deg' emitted; PASS4/PASS3c conjugate truth about off_p by S @ slerp(I,D4,s) @ S^-1 (S=q_pred @ ramp^-1) -- exact, no commutator error.",
+      "measured": "15deg synthetic rest_rot: repose completes at t=0.270 with deployment; PASS4 0.0000-0.0146m (phantom-free)",
+      "caveat": "no production asset uses rest_rot yet; verified only on synthetic override"
+    },
+    {
+      "id": "F-04",
+      "status": "implemented",
+      "what": "_rigid_se3(M)=LocRotScale(t, normalized q, 1) applied to carrier refs in W_rel/D_b_inv/spin rel_travel/group fit (worker) and ref0/refk in diagnose carrier_rel.",
+      "measured": "no buster regression (carrier has no scale keys); guards against squash/stretch roots on future assets"
+    },
+    {
+      "id": "F-05",
+      "status": "implemented",
+      "what": "PASS4 drops probe frames landing on baked stop frames (tautology); keyframes emit 'quat' [w,x,y,z] sequentially hemisphere-chained for direct runtime nlerp.",
+      "measured": "probe set now exclusively inter-stop; manifest size unchanged in fields consumed by 2-pose consumers"
+    }
+  ],
+  "remaining_issues": [
+    {
+      "id": "R-01",
+      "severity": "MEDIUM",
+      "issue": "leg_l/r/leg_f non-rigid chains: endpoint_dev 0.31-0.47m is permanent deployed-pose error baked into the joined .ydr; fit centers it (~0.19m proximal / 0.64m distal tip at PASS3c) but cannot remove it",
+      "fix": "split each leg chain into 2-3 part_map entries (proximal/distal); needs max_parts >=18 (currently 16, buster at 15 groups)"
+    },
+    {
+      "id": "R-02",
+      "severity": "MEDIUM",
+      "issue": "41 FK_SCISSOR_CLIP on mech -- unreviewed; could be real in-game plate clipping",
+      "fix": "visual review of knee/hip/foot plates at 25deg flex; either remodel plates or accept joint-overlap as design"
+    },
+    {
+      "id": "R-03",
+      "severity": "LOW",
+      "issue": "weighted Kabsch (driver 3x) biases residual toward distal members to protect the mount seam; an asset where distal accuracy matters more may want weight=1",
+      "fix": "assembly_config.group_fit_proximal_weight knob"
+    },
+    {
+      "id": "R-04",
+      "severity": "LOW",
+      "issue": "armature-deformed multi-member groups skip the fit (object matrices don't describe skinned verts); WARN_GROUP_FIT_SKIPPED_DEFORMED emitted",
+      "fix": "evaluated-vert probe sampling if a skinned multi-member group appears"
+    },
+    {
+      "id": "R-05",
+      "severity": "LOW",
+      "issue": "121 DISJOINT_KINEMATIC_SEAM on mech -- unchanged design noise from Phase 4, still unreviewed",
+      "fix": "manual review of Spine3<->Pelvis/Thigh hop patterns"
+    }
+  ],
+  "knobs_added": {
+    "assembly_config.group_fit": "'procrustes' (default) | 'driver' -- whole-group Kabsch trajectory fit for multi-member hinge groups",
+    "assembly_config.group_fit_proximal_weight": "3.0 -- driver member weight in the fit (mount-seam protection)",
+    "assembly_config.max_intra_part_dev": "0.10 m -- WARN_NONRIGID_CHAIN threshold"
+  },
+  "manifest_fields_added": {
+    "parts[].rest_rot_deg": "recipe rest_rot override in degrees (only when nonzero)",
+    "parts[].keyframes[].quat": "[w,x,y,z] sequentially hemisphere-chained",
+    "parts[].keyframes[].repose": "motion-progress repose fraction s_k (only when rest_rot_deg present)"
+  }
+}

@@ -65,17 +65,29 @@ docs elsewhere describe other versions.
   cumulative >180° tracks on the short path; anchoring to `q[0]` snaps
   the tail. The RDP evaluator applies the same rule per candidate
   interval, not just on the emitted list.
-- Hinge parts carry `keyframes[{t,pos,rot}]` — adaptive SE(3) RDP stops
-  (`keyframe_mode`: adaptive/uniform/off; `keyframe_tol_m`, 
-  `keyframe_max_stops`). Interpolate piecewise: bracket `t` in
-  `[t_i,t_{i+1}]`, lerp `pos`, slerp `rot` at local alpha. `keyframes[0]`
-  ≡ folded, `keyframes[-1]` ≡ deployed (the `rest_rot`/`D_rot⁻¹`
-  compensation is slerp-ramped to identity across t so both ends match
-  the legacy fields bit-for-bit). Absent `keyframes` → 2-pose fallback.
+- Hinge parts carry `keyframes[{t,pos,rot,quat,repose?}]` — adaptive
+  SE(3) RDP stops (`keyframe_mode`: adaptive/uniform/off;
+  `keyframe_tol_m`, `keyframe_max_stops`). Interpolate piecewise: bracket
+  `t` in `[t_i,t_{i+1}]`, lerp `pos`, slerp `rot`/`quat` at local alpha.
+  `quat` is sequentially hemisphere-chained for direct nlerp.
+  `keyframes[0]` ≡ folded, `keyframes[-1]` ≡ deployed — the
+  `rest_rot`/`D_rot⁻¹` compensation slerp-ramps to identity across
+  **motion progress** `s(k)` (not clock t), so the re-pose completes with
+  physical deployment; `rest_rot` parts also emit `rest_rot_deg` +
+  per-keyframe `repose` (= s_k). Absent `keyframes` → 2-pose fallback.
+- Multi-member groups (`group_fit=procrustes`, default) use a weighted
+  Kabsch whole-group delta (driver member ×`group_fit_proximal_weight`=3,
+  normalized weights, det<0 fix, delta space) instead of the single
+  driver matrix — halves joined-chain error; endpoint ε-snap (<1e-4)
+  keeps rigid groups bit-identical; fitted groups emit group best-fit
+  `deployed_*`. `WARN_NONRIGID_CHAIN` reports
+  `interior_dev`/`endpoint_dev`; endpoint_dev >0.02 m is permanent →
+  `part_map` split. Carrier refs are `_rigid_se3`-normalized everywhere.
 - Mid-pose renders draw the piecewise path; `keyframes` stops are exact
   source poses in manifest space — only inter-stop interpolation is
   approximate. Joined parts with independently-animated members (buster
-  legs, 8 segs/part) plateau ~0.25 m — split them in `part_map`.
+  legs, 8 segs/part) now plateau ~0.10 m interior / up to ~0.64 m
+  distal at deployed — split them in `part_map` to go lower.
 
 ## QA gates — run order after any transform/export change
 
@@ -86,15 +98,20 @@ docs elsewhere describe other versions.
    manifest-vs-source reconstruction ≈0 (0.0000 m on buster = Contract A
    exact), PASS4 interior probes — midpoints between every adjacent
    keyframe stop + fixed sweep, piecewise-predicted vs carrier-relative
-   TRUE source (≤0.015 m on buster single-member hinges; ~0.25 m plateau
+   TRUE source (≤0.015 m on buster single-member hinges; ~0.10 m plateau
    on multi-member leg chains = non-rigid join limit, not interp error).
+   PASS3c: deployed-pose per-member max-vert residual — honest endpoint
+   error for non-rigid chains.
 3. `tools/rigid_plate_qa.py` on ped `.ydd` — **weld verts first** (raw
    `.ydd` split normals = 1 island/face); flags: `CROSS_LATERAL_BIND`
    (±x geometry on contralateral `SKEL_L/R_*` = real defect),
    `DISJOINT_KINEMATIC_SEAM` (welded edge, bones >1 hop apart — 1 hop is
    a legitimate joint, do NOT flag), FK penetration (**BVHTree 2-of-3-axis
    bidirectional ray enclosure** on welded island faces — open C-shells
-   can't false-positive; 54→0 on the mech), `PART_BONE_MISMATCH` (islands
+   can't false-positive; 54→0 on the mech) **plus `FK_SCISSOR_CLIP`**
+   (`BVHTree.overlap` tri-tri pairs on posed islands — flat/open-sheet
+   crossings the ray test can't see; 41 on the mech, unreviewed),
+   `PART_BONE_MISMATCH` (islands
    attributed via `stream/<asset>.partmap.json` — `__part_*` vgroups
    don't survive `.ydd` export).
 4. Assembly renders vs `testing/REFERENCE_*.jpg` Sketchfab thumbs.

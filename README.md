@@ -141,6 +141,9 @@ python dashboard.py                               # http://127.0.0.1:8420
 | `assembly_config.keyframe_mode` | `"adaptive"` | Hinge manifest stops: `adaptive` = SE(3) RDP over the sampled driver trajectory; `uniform` = 5-stop grid 0/.25/.5/.75/1; `off` = legacy 2-pose manifest (no `keyframes`) |
 | `assembly_config.keyframe_tol_m` | `0.02` | Adaptive stop target: split intervals until max canonical-vertex error ≤ this |
 | `assembly_config.keyframe_max_stops` | `5` | Hard cap on emitted keyframe stops per hinge part |
+| `assembly_config.group_fit` | `"procrustes"` | Multi-member group trajectory: `procrustes` = weighted Kabsch best-fit delta across all members (endpoint ε-snap keeps rigid groups bit-identical); `driver` = legacy single-driver anchor |
+| `assembly_config.group_fit_proximal_weight` | `3.0` | Driver member weight in the group fit — biases residual toward distal members to protect the mount seam |
+| `assembly_config.max_intra_part_dev` | `0.10` | `WARN_NONRIGID_CHAIN` threshold (m): member deviation vs the group-fit delta, split `interior_dev`/`endpoint_dev` |
 | `rig_recipe` | null | Workbench recipe (`{parts, preview_transform, user_transform, anim_capture}`) — overrides `part_map`; roles → co-moving clusters, `trash` deletes parts, same-role multi-clusters export as `<asset>_<role>_<idx>`. See `reference/RIG_WORKBENCH.md` |
 | `exclude_objects` | `[]` | fnmatch patterns on object names — matched objects + subtrees dropped (Sketchfab display bases/env junk) |
 | `license` / `source_url` / `attribution` | null | Provenance → build_report + registry |

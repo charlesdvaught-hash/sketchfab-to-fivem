@@ -127,3 +127,21 @@ Round 3 of external review (Argon). Fixes + measured results are in
   snapshot-mode stale-bounds site).
 - **FK_PENETRATION 54→0** via BVHTree 2-of-3-axis ray enclosure (F-05) —
   all prior hits were open-shell false positives.
+
+## Phase 5 — residual audit fixes (`PHASE5_RESIDUALS.md` + `.json`)
+
+- **Whole-group Kabsch fit** (`group_fit=procrustes`): multi-member hinge
+  groups fit a weighted rigid delta across all members (driver ×3,
+  endpoint ε-snap keeps rigid groups bit-identical). Buster legs:
+  0.25 m → **~0.10 m** worst interior probe; `WARN_NONRIGID_CHAIN`
+  reports `interior_dev`/`endpoint_dev` and recommends `part_map` splits
+  (endpoint_dev 0.31–0.47 m is permanent — split needed for <0.05 m).
+- **PASS3c (new)**: deployed-pose per-member max-vert residual — honest
+  endpoint residuals driver-anchoring used to hide.
+- **`FK_SCISSOR_CLIP`**: `BVHTree.overlap` tri-tri pairs catch flat-sheet
+  crossings enclosure can't see — **41 on the mech** (knee/hip/foot).
+- **Motion-progress `rest_rot` repose**: `rest_rot_deg` + per-keyframe
+  `repose` emitted; PASS4/PASS3c conjugate truth — synthetic 15°
+  `rest_rot` verified phantom-free (repose completes at deployment).
+- **Rigid-SE3 carrier** (`_rigid_se3`) everywhere carrier relativization
+  happens + chained `quat` field for runtime nlerp.

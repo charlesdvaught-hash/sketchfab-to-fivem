@@ -83,10 +83,12 @@ samples). Each part is one of two kinds:
 
 - **hinge** — a part that changes pose between folded and deployed.
   Manifest: `attach_offset`, `deployed_offset`, `folded_rot`, `deployed_rot`,
-  plus `keyframes` — an array of `{t, pos, rot}` stops over `t ∈ [0,1]`
+  plus `keyframes` — an array of `{t, pos, rot, quat}` stops over `t ∈ [0,1]`
   selected by **adaptive SE(3) RDP** to track the sampled driver trajectory
   (default; see "Keyframe stops" below). `keyframes[0]` ≡ folded pose and
-  `keyframes[-1]` ≡ deployed pose bit-for-bit.
+  `keyframes[-1]` ≡ deployed pose bit-for-bit. `quat` is the same basis as
+  `[w,x,y,z]`, sequentially hemisphere-chained so runtime consumers nlerp
+  adjacent stops directly.
 - **spin** (G2 — rotors/propellers/fans) — a part that rotates continuously
   on a hub for the whole window. Manifest: `attach_offset` (the hub — the
   point on the recovered spin axis nearest the part's centroid),
@@ -142,17 +144,38 @@ Every hinge part samples its **driver trajectory** at every frame of the
 window — the driving object's `matrix_world`, or the driving bone's
 `arm.matrix_world @ pose_bone.matrix` when the member is armature-deformed —
 and relativizes it into the carrier's f_start frame:
-`W_rel(k) = ref(0) @ ref(k)^-1 @ W(k)`. Exact per-sample manifest poses are
-then:
+`W_rel(k) = ref(0) @ ref(k)^-1 @ W(k)` — carrier refs are **rigid-SE3
+normalized** (scale/shear stripped) so animated squash on the root can't
+inject non-Euclidean distortion into child lever arms. The per-sample
+rigid **delta** is `T'(k) = W_rel(k) @ W0⁻¹` (driver path). For
+**multi-member hinge groups**, `assembly_config.group_fit` (default
+`"procrustes"`) replaces the single-driver delta with a weighted Kabsch
+best fit over per-member probe verts (centroid + 6 axis-extremes + stride,
+driver member weighted `group_fit_proximal_weight`, default 3×, centroids
+normalized by Σw): `T'_fit(k)` maps the group's *whole* f_start
+configuration into frame k, centering the rigid approximation across the
+chain instead of dumping all error on distal members. An endpoint
+**epsilon snap** (<1e-4 m/rad) returns rigid groups to the exact driver
+values so their manifests stay bit-identical; fitted groups emit
+**fit-based** `deployed_*` (the group's best-fit end pose — `keyframes[-1]`
+matches it exactly). Members deformed by armatures can't be fit from
+object matrices → driver fallback + `WARN_GROUP_FIT_SKIPPED_DEFORMED`.
+Exact per-sample manifest poses are then:
 
-- position: `pos(k) = hinge_n + N₃₃ @ (W_rel(k).translation − hinge)`
-  (`hinge_n`/`hinge` per the pivot rule above — reduces to `N @ t + body_off`);
-- basis: `R_basis(k) = R @ W_rel(k) @ slerp(D_rot⁻¹ → I, t_k)` — the
-  `rest_rot` compensation **ramps** across `t` so `t=0` yields `folded_rot`
-  and `t=1` yields `deployed_rot` bit-for-bit while the trajectory stays
-  continuous (a hard `D_rot⁻¹` drop at the last stop would be an
-  irreducible step RDP wastes stops chasing; with `rest_rot` absent the
-  ramp is the identity).
+- position: `pos(k) = hinge_n + N₃₃ @ (T'(k) @ hinge − hinge)` — driver
+  path reduces to `hinge_n + N₃₃ @ (W_rel(k).translation − hinge)`;
+- basis: `R_basis(k) = R @ T'(k) @ W0 @ slerp(D_rot⁻¹ → I, s_k)` — the
+  `rest_rot` compensation ramps to identity across **motion progress**
+  `s(k) = min(1, pose_dist(T'(k),I) / pose_dist(T'_last,I))`
+  (`pose_dist = ‖Δt‖ + 0.2·|θ|`; falls back to `t_k` when the part barely
+  moves), so the re-pose completes *with the physical deployment* instead
+  of twisting through a stationary hold — `t=0` yields `folded_rot` and
+  `t=1` yields `deployed_rot` bit-for-bit while the trajectory stays
+  continuous. Parts with a nonzero `rest_rot` also emit `rest_rot_deg`
+  and a per-keyframe `repose` (= `s_k`) so diagnostics can conjugate
+  source truth by `S @ slerp(I, D_rot, s) @ S⁻¹` about the pivot
+  (`S = q_pred @ ramp_k⁻¹`) and measure tracking error instead of
+  phantom ramp error.
 
 Stops are then chosen by greedy SE(3) Ramer–Douglas–Peucker over the ≤600
 samples: start `[0, last]`, split the worst-error interval at the argmax
@@ -171,11 +194,13 @@ deploy phase) and left the settled tail on one interval — the adaptive
 behavior is exactly where option (a)'s uniform grid was blind.
 
 **Multi-member caveat**: a joined part is baked rigid at f_start. If its
-members carry *independent* curves (buster's 8-segment leg chains), no
-single-driver rigid track can represent them — mid-clip member verts
-diverge (measured ≤0.38 m per segment, ~0.25 m on the joined centroid).
-Fix granularity in `part_map`: give each independently-animated member
-its own part entry (each gets its own keyframe track).
+members carry *independent* curves (buster's 8-segment leg chains), even a
+best-fit rigid track can't represent them — the Kabsch fit halves the
+worst interior error (0.25 m → ~0.10 m measured on buster legs) but
+`WARN_NONRIGID_CHAIN` still reports `interior_dev`/`endpoint_dev`; an
+`endpoint_dev` above ~0.02 m is **permanent deployed-pose error** in the
+joined .ydr and the warn recommends a `part_map` split (each member gets
+its own keyframe track; watch `max_parts`).
 
 Emits `<name>_body.ydr` + `<name>_partNN.ydr` + `<name>_propNN.ydr` and
 `assembly_manifest.lua`:
@@ -195,10 +220,14 @@ return {
       deployed_offset = {x,y,z},        -- body-local deployed hinge pos
       folded_rot  = {x,y,z},            -- degrees, YXZ_deg convention
       deployed_rot= {x,y,z},
+      rest_rot_deg = {x,y,z},           -- only when recipe rest_rot != 0
       keyframes = {                     -- adaptive RDP stops (see below)
-        { t = 0.0,    pos = {x,y,z}, rot = {x,y,z} },   -- == folded pose
-        { t = 0.2217, pos = {x,y,z}, rot = {x,y,z} },   -- interior stops...
-        { t = 1.0,    pos = {x,y,z}, rot = {x,y,z} },   -- == deployed pose
+        { t = 0.0,    pos = {x,y,z}, rot = {x,y,z},
+          quat = {w,x,y,z}, repose = 0.0 },             -- == folded pose
+        { t = 0.2217, pos = {x,y,z}, rot = {x,y,z},
+          quat = {w,x,y,z}, repose = 0.30 },            -- interior stops...
+        { t = 1.0,    pos = {x,y,z}, rot = {x,y,z},
+          quat = {w,x,y,z}, repose = 1.0 },             -- == deployed pose
       } },
     { kind = "spin", model = "<name>_prop01", source_objects = {...},
       attach_offset = {x,y,z},          -- body-local hub point (on axis)

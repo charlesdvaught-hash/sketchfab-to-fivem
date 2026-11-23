@@ -100,6 +100,14 @@ python inspect_sollumz.py                         # (via blender) refresh toolch
 python dashboard.py                               # http://127.0.0.1:8420
 ```
 
+## Dashboard screenshots
+
+| | |
+|---|---|
+| ![Discover](docs/screenshots/discover.png) | ![Rig workbench](docs/screenshots/rig_guided_cleanup.png) |
+| ![Library](docs/screenshots/library.png) | ![Library grid](docs/screenshots/library_grid.png) |
+| ![Help tooltip](docs/screenshots/help_tooltip.png) | ![Settings](docs/screenshots/settings.png) |
+
 ## `override.json` — every knob (all optional)
 
 | Field | Default | Effect |

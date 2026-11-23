@@ -1370,7 +1370,8 @@ def motion_multi_part(job, mc):
                      "kind": spec.get("kind"),
                      "axis_cfg": spec.get("spin_axis"),
                      "rpm_cfg": spec.get("spin_rpm"),
-                     "pivot_cfg": spec.get("pivot")}
+                     "pivot_cfg": spec.get("pivot"),
+                     "rest_rot": spec.get("rest_rot")}
             else:
                 g = {"label": label, "members": list(spec), "kind": None,
                      "axis_cfg": None, "rpm_cfg": None}
@@ -1581,9 +1582,16 @@ def motion_multi_part(job, mc):
             select_only(bobs)
             bpy.ops.object.join()
         b = bobs[0]
+        rr = g.get("rest_rot")
+        D_rot = (Euler(tuple(math.radians(float(a)) for a in rr[:3]),
+                       'XYZ').to_matrix()
+                 if rr and any(abs(float(a)) > 1e-6 for a in rr[:3])
+                 else Matrix.Identity(3))
+        D4_inv = D_rot.to_4x4().inverted()
         if g["kind"] == "spin":
             prop_i += 1
             info = spin_info[gi]
+            basis_q = (R @ info["W0"]).to_quaternion()
             if g.get("pivot_cfg"):
                 # workbench recipe pivot: already in normalized recipe space
                 pivot_n = Vector(g["pivot_cfg"])
@@ -1595,7 +1603,7 @@ def motion_multi_part(job, mc):
                      "source_objects": list(g["members"]),
                      "attach_offset": [round(pivot_n.x, 4), round(pivot_n.y, 4),
                                        round(pivot_n.z, 4)],
-                     "initial_rot": fivem_euler(R @ info["W0"]),
+                     "initial_rot": fivem_euler(R @ info["W0"] @ D4_inv),
                      "spin_axis": [round(axis_body.x, 4), round(axis_body.y, 4),
                                    round(axis_body.z, 4)],
                      "spin_rpm": round(info["rpm"], 2)}
@@ -1603,6 +1611,7 @@ def motion_multi_part(job, mc):
         else:
             part_i += 1
             hinge, W0, W1 = part_geom[gi]
+            basis_q = (R @ W0).to_quaternion()
             W1_rel = D_b_inv @ W1
             if g.get("pivot_cfg"):
                 # workbench recipe pivot: already in normalized recipe space
@@ -1618,10 +1627,18 @@ def motion_multi_part(job, mc):
                                        round(hinge_n.z, 4)],
                      "deployed_offset": [round(dep_n.x, 4), round(dep_n.y, 4),
                                          round(dep_n.z, 4)],
-                     "folded_rot": fivem_euler(R @ W0),
+                     "folded_rot": fivem_euler(R @ W0 @ D4_inv),
                      "deployed_rot": fivem_euler(R @ W1_rel)}
+        # Canonicalise verts into pivot-local orientation: baked verts carry
+        # the part's f_start world rotation, and consumers apply the emitted
+        # folded/initial rotation as an absolute basis -- without unrotating
+        # here that rotation double-applies (Buster drone nacelles). rest_rot
+        # stays INSIDE the canonical verts (it is a deliberate re-pose), so
+        # the emitted basis is compensated by D_rot^-1 to keep the folded
+        # render exact.
+        B_inv = basis_q.to_matrix().inverted()
         for v in b.data.vertices:
-            v.co -= hinge_n
+            v.co = D_rot @ (B_inv @ (v.co - hinge_n))
         b.data.update()
         label = sanitize_target_name(label, asset_name)
         if label is None:
@@ -1640,7 +1657,10 @@ def motion_multi_part(job, mc):
                       "which maps to AttachEntityToEntity rotationOrder=4\n"
                       "(eRotationOrder ROT_YXZ), NOT order 2.\n"
                       "attach_offset / deployed_offset are body-local space\n"
-                      "(body grounded at 0,0,0).\n"
+                      "(body grounded at 0,0,0). Part .ydr verts are\n"
+                      "canonicalised into pivot-local orientation, so\n"
+                      "folded_rot/initial_rot are ABSOLUTE bases (apply\n"
+                      "once), not additive deltas.\n"
                       "Usage: attach each part to the body entity at\n"
                       "attach_offset with folded_rot/initial_rot. kind=hinge:\n"
                       "interpolate offset->deployed_offset + rot->deployed_rot\n"
@@ -3031,6 +3051,7 @@ def recipe_to_part_map(recipe, mc, context=None):
                 "spin_axis": axis_of.get(role),
                 "spin_rpm": "auto" if role == "rotor" else None,
                 "pivot": piv,
+                "rest_rot": rr,
             }
     mc["part_map"] = part_map
     mc["rig_recipe"] = recipe

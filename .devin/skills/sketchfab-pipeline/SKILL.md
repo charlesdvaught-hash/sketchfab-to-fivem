@@ -1,0 +1,85 @@
+---
+name: sketchfab-pipeline
+description: Sketchfab→FiveM converter invariants — Sollumz 2.9 attribute names, Blender 5.2 bone math, NLA evaluation, Contract A transforms, and the QA gate run order. Use when touching blender_worker.py, render_check.py, tools/, or diagnosing any export defect.
+allowed-tools:
+  - read
+  - grep
+  - glob
+  - exec
+---
+
+# Sketchfab→FiveM pipeline — proven invariants
+
+Every item below has a measured receipt in `testing/`. Trust these over
+external references for THIS toolchain (Blender 5.2.1 LTS + Sollumz 2.9.0);
+docs elsewhere describe other versions.
+
+## Sollumz 2.9 attribute naming (measured, not docs)
+
+- UV layers must be named `UVMap 0` — **zero-indexed, with a space**.
+  `get_uv_map_name(i)` → `f"UVMap {i}"`. NOT `TexCoord0` (that name is
+  dead to the 2.9 exporter — exports all-zero UVs, whole mesh samples one
+  atlas pixel → flat color renders).
+- Vertex-color attrs are `Color 1`, `Color 2`, … — **1-indexed** via
+  `get_color_attr_name(i)` → `f"Color {i+1}"`. NOT `Color 0`.
+- **Empty-shell trap**: Sollumz helpers create an EMPTY layer under the
+  expected name while real data sits under `UVMap`/`COLOR_0`. Rescue =
+  drop the empty shell, rename the data layer to the expected name,
+  mark it active/active_render, retarget `ShaderNodeUVMap.uv_map`.
+  Logged as `WARN_UV_RESCUE_EMPTY`. Detect "empty" by all-zero coords
+  (max |u|,|v| < 1e-6), NOT bbox span — palette UVs are legitimately flat.
+
+## Blender 5.2 API pitfalls
+
+- `Bone.matrix` is **3×3** parent-relative (was 4×4 in older versions) —
+  any `4x4 @ 3x3` op throws. Use `bone.matrix_local` (4×4 armature-space
+  rest matrix) for FK skinning deltas:
+  `M_delta = pose_bone.matrix @ bone.matrix_local.inverted()`.
+- glTF import leaves animation strips **muted on NLA tracks**, not in
+  `ad.action`. Before sampling pivots/poses: `resolve_clip_playback`
+  (unmute strips+tracks, clear `is_solo` — a soloed track suppresses the
+  active action — set `ad.action`) AND `scene.frame_set(f_start)` to
+  match the compile pose. Muted-pose measurements ≠ compile-pose.
+
+## Contract A transform math (our choice — do not mix with Contract B)
+
+- Canonicalized verts: `v = D_rot @ (B⁻¹ @ (v − hinge_n))` — each part's
+  verts live in pivot-local orientation.
+- Emitted manifest rotations are **absolute basis**, not deltas;
+  `folded_rot`/`deployed_rot`/`initial_rot` all share one frame.
+  `rest_rot` stays inside canonical verts; emitted basis compensated
+  by `D_rot⁻¹`.
+- `pivot_cfg` pivots MUST get `+body_off` (verts get it — a pivot that
+  doesn't leaves ~1.3 m internal offsets: orbit-instead-of-spin).
+- Deployed hinge: `dep_n = hinge_n + N.to_3x3() @ (W1_rel.to_translation()
+  − hinge)` — preserves driver travel, not naive `body_off` shifts.
+
+## Manifest consumer contract
+
+- Hemisphere-normalize before slerp: `dot(q0,q1) < 0 → negate q1`.
+  `Euler.to_quaternion()` can yield antipodal pairs → long-path spin.
+- Mid-pose renders are lerp+slerp = what FiveM's 2-pose interpolator
+  draws, NOT source ground truth. Blind spots: chord-vs-arc sag
+  (≈0.293·L at t=0.5 for 90° parent arcs) and staggered sub-clip timing.
+
+## QA gates — run order after any transform/export change
+
+1. `python test_harness.py` — must print `ALL CHECKS PASSED`.
+2. `tools/diagnose_trs.py` on the shipped resource — PASS1 muted/active
+   NLA divergence ≈0, PASS2 `.ydr` part centers ≈0 (<0.05 m),
+   PASS3 lever-arm swing ≈0.
+3. `tools/rigid_plate_qa.py` on ped `.ydd` — **weld verts first** (raw
+   `.ydd` split normals = 1 island/face); flags: `CROSS_LATERAL_BIND`
+   (±x geometry on contralateral `SKEL_L/R_*` = real defect),
+   `DISJOINT_KINEMATIC_SEAM` (welded edge, bones >1 hop apart — 1 hop is
+   a legitimate joint, do NOT flag), FK penetration.
+4. Assembly renders vs `testing/REFERENCE_*.jpg` Sketchfab thumbs.
+- `WARN_PART_PIVOT_OFFSET` (>0.15 m `.ydr` bbox-center) = pivot bug.
+- `WARN_RENDER_CHECK` is advisory only; `render_check` must only appear
+  in `checks_passed` on returncode 0 — gate dishonesty was a real bug.
+
+## Pointers
+
+`AGENTS.md` (file map) · `reference/RAGE_SOLLUMZ_CONTRACTS.md` ·
+`reference/RIG_WORKBENCH.md` (workbench data contract) ·
+`testing/PHASE2_DIAGNOSIS.md` (audit history + evidence links).

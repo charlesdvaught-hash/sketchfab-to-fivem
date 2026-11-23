@@ -35,13 +35,20 @@
     ]
   },
   "external_converters": {
-    "policy": "reference-only; explicitly excluded from the production pipeline",
+    "policy": "local-only by default; external assist is opt-in, per-job, post-local-failure only",
     "entries": {
-      "gtax-dev/gtav-glb-to-ydr": "hosted Go CLI client, not a local engine. No dependency, no auto-upload, no API key, no fallback, output may not bypass gates. Manual human comparison use only.",
+      "gtax-dev/gtav-glb-to-ydr": "opt-in external assist for eligible failed static props. Requires the Settings master switch + explicit per-job consent checkbox + user action. Uploads only the source .glb; never automatic, never a fallback, output never bypasses gates.",
       "gtax-dev/v-drawable-to-glb": "hosted reverse-conversion API client. Diagnostic-only manual use; never a validation oracle; never in production.",
       "Sollumz/Sollumz": "the primary local conversion engine; pinned + probed."
     },
-    "network_isolation": "no automated job may contact remote conversion services. A failed local conversion quarantines normally."
+    "network_isolation": "no automated job may contact remote conversion services. External upload happens only through the dashboard's per-job consented /api/xa/convert action. A failed local conversion quarantines normally; the assist card appears only on the failure screen for static props.",
+    "assist_contract": {
+      "eligibility": "asset_type=prop only, after a local failure (ERR_WORKER_FAILED, ERR_EXPORT_ARTIFACT_MISSING, ERR_GATE1_*, ERR_GATE2_YTYP_INVALID), after fix-it guidance shown",
+      "consent": "master switch (localStorage sig_xa, default off) + per-job #xa_ack checkbox (never persisted) + explicit #xa_go click",
+      "api_key": "server-side only: setup.json external_assist.api_key, build/xa_config.json, or GTAX_API_KEY env. Never sent to the browser.",
+      "provenance": "build_report.json gains provenance.external_assist {service, mode, consented_at, source_sha256, returned_sha256}; runtime_validation stays NOT_PERFORMED; library shows an EXTERNAL TOOL badge",
+      "gates": "returned archives are integrity-checked (RSC7 magic, size floors) and name-collision-checked before publish; external output is never treated as validation of the local build"
+    }
   },
   "directory_contract": {
     "inbox": "./inbox",

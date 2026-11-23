@@ -2745,6 +2745,44 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
 .lbx .x:hover{color:var(--rose)}
 .lbx .nt{display:inline-block;color:var(--fgs);font-size:12px;margin-top:4px;text-decoration:none;letter-spacing:.1em}
 .lbx .nt:hover{color:var(--cyan)}
+/* ── help layer ─────────────────────────────────────────── */
+#hl_tip{position:fixed;z-index:10000;max-width:320px;padding:8px 10px;border-radius:6px;
+ font-size:12px;line-height:1.4;pointer-events:none;opacity:0;transform:translateY(4px);
+ transition:opacity .12s,transform .12s;background:var(--hl-bg,#071017);
+ color:var(--hl-ink,#dff6ff);border:1px solid var(--hl-line,#1d5560)}
+#hl_tip.show{opacity:1;transform:none}
+#hl_tip .k{display:block;opacity:.7;font-size:11px;margin-top:4px}
+.cy-tip-i{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+ margin-left:5px;padding:0;border-radius:50%;border:1px solid currentColor;background:none;
+ color:inherit;font-size:10px;line-height:1;cursor:help;opacity:.65;vertical-align:middle}
+.cy-tip-i:hover,.cy-tip-i:focus{opacity:1}
+body.hl-off [data-tip]:not(.cy-tip-i){cursor:auto}
+@media (prefers-reduced-motion:reduce){#hl_tip{transition:none}}
+
+/* ── rig wizard ─────────────────────────────────────────── */
+#wz_mode .btn{opacity:.55}
+#wz_mode .btn.on{opacity:1;border-color:var(--cyan);color:var(--cyan)}
+#wz_bar{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+#wz_bar .wzs{font-size:10px;padding:3px 8px;border:1px solid var(--hair);border-radius:10px;
+ color:var(--fgs);letter-spacing:.04em;cursor:default}
+#wz_bar .wzs.cur{border-color:var(--cyan);color:var(--cyan)}
+#wz_bar .wzs.done{color:var(--grn);border-color:var(--grn);cursor:pointer}
+#wz_bar .wzs.skip{color:var(--fgs);opacity:.55;text-decoration:line-through;cursor:pointer}
+#wz_card{border:1px solid var(--bord);border-radius:4px;background:var(--s2);
+ padding:10px 12px;margin:6px 0;font-size:12px}
+#wz_card .wzt{font-size:12px;font-weight:600;color:var(--fg);margin-bottom:4px}
+#wz_card .wzsub{color:var(--fgs);font-size:11px;margin-bottom:8px}
+#wz_card .wzwarn{border:1px solid var(--amb);border-radius:3px;background:rgba(224,168,63,.08);
+ color:var(--amb);padding:6px 8px;font-size:11px;margin:6px 0}
+#wz_card .wzcls{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+#wz_card .wzchip,#wz_roles .wzchip{font-size:11px;padding:5px 10px;border:1px solid var(--bord);
+ border-radius:3px;background:var(--s1);color:var(--fg);cursor:pointer}
+#wz_card .wzchip:hover,#wz_roles .wzchip:hover{border-color:var(--cyan);color:var(--cyan)}
+#wz_card .wzchip.sug{border-color:var(--cyan);color:var(--cyan);box-shadow:inset 0 0 8px rgba(0,217,232,.1)}
+#wz_islands .wzisl{display:flex;align-items:center;gap:8px;font-size:11px;padding:3px 0;
+ border-bottom:1px solid var(--hair)}
+.wz-dim{opacity:.35}
+.wz-pend > span:first-child{outline:1px dashed var(--cyan);outline-offset:-1px}
 </style></head><body>
 
 <header class="ph">
@@ -2752,6 +2790,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
  <span class="chip ok" id="st_status">SYSTEM: &hellip;</span>
  <span class="chip" id="st_ready"></span>
  <button class="chip amber" id="st_prob" aria-expanded="false" aria-controls="problems-rail" role="alert" aria-live="polite"></button>
+ <button class="chip" id="hl_toggle" title="toggle hover tips" aria-pressed="true">? help: on</button>
  <span class="chip" id="clock" style="margin-left:auto">&mdash;</span>
 </header>
 
@@ -2760,6 +2799,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
  <output id="pipeline-status" for="pipeline-progress" role="status">
   IDLE &mdash; <b>1. fetch GLB &rarr; 2. decimate &amp; collision &rarr; 3. .ydr/.ytyp compile &rarr; 4. 6-view render</b>
  </output>
+ <div class="hint" id="wz_pipecap"></div>
 </div>
 
 <nav class="tabs" role="tablist" aria-label="Primary sections">
@@ -2824,6 +2864,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
      <div class="formsec"><div class="formsec-label">prop identity</div>
       <label>prop name <span style="color:var(--cyan)">&larr; this is the spawn name</span></label>
       <input type="text" id="f_name" placeholder="my_cool_prop (blank = auto)">
+      <div class="hint" id="wz_namewarn" style="color:var(--amb)"></div>
       <fieldset class="cy-fieldset"><legend>what kind of prop?</legend>
        <div class="opt">
         <label class="radio"><input type="radio" class="cy-radio" name="kind" value="static" checked>still prop</label>
@@ -2832,6 +2873,11 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
         <label class="radio"><input type="radio" class="cy-radio" name="kind" value="ped" onchange="kindChanged()">ped clothing (rigged .ydd)</label>
        </div>
       </fieldset>
+      <div class="hint" id="wz_kindhint"></div>
+      <div id="wz_ymtwarn" style="display:none;border:1px solid var(--amb);border-radius:3px;padding:6px 8px;font-size:11px;color:var(--amb);margin:6px 0">
+       Heads up: wearable clothing packs need a .ymt (GTA's clothing registration file) this tool can't make yet. The 3D mesh still converts, but the job stops at publish.
+       <label style="display:block;margin-top:4px"><input type="checkbox" id="wz_ymtack"> I understand</label>
+      </div>
       <div id="posesrow" style="display:none">
        <label>how many poses? <span class="dim">(2-12, sampled across the animation)</span></label>
        <input type="number" id="f_poses" value="4" min="2" max="12">
@@ -2848,6 +2894,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
      <div class="formsec"><div class="formsec-label">scale &amp; collision</div>
       <label>make it this tall (m) <span class="dim">&mdash; optional, rescales the model</span></label>
       <input type="number" id="f_height" step="0.1" placeholder="e.g. 1.8">
+      <div class="hint" id="wz_hwarn" style="color:var(--amb)"></div>
       <label>collision</label>
       <select id="f_col">
        <option value="convex_hull" selected>smart shape (convex hull) &mdash; default</option>
@@ -2875,7 +2922,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
       <input type="text" id="f_lic" placeholder="e.g. CC-BY-4.0">
       <input type="text" id="f_url" placeholder="sketchfab url" style="margin-top:4px">
      </div>
-     <details><summary>advanced &mdash; raw override.json</summary>
+     <details><summary data-tip="Expert settings as raw JSON. Anything here wins over the form.||Leave it empty unless a guide tells you otherwise.">advanced &mdash; raw override.json</summary>
       <textarea id="f_adv" placeholder='{"motion_config":{"samples":[0,0.5,1]},"lod_dist":300}'></textarea>
       <div class="hint">anything here merges OVER the fields above &middot; moving-parts extras: part_map {"label":["mesh","mesh"] or {"meshes":[...],"kind":"spin","spin_axis":[0,0,1],"spin_rpm":900} or "_body":[carrier meshes]} &middot; keep_actions &middot; exclude_objects &middot; assembly_config {max_parts, spin_min_deg, spin_tail_min_dpf, spin_max_travel_m, part_collision} &mdash; see MOTION_SPEC.md</div>
      </details>
@@ -2953,13 +3000,32 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
     <div class="hint">drop .glb/.gltf/.fbx/.obj/.zip (+ optional override.json) into the inbox folder and sweep to batch-convert.</div>
    </div>
   </div>
+  <div class="card" id="xa_settings">
+   <h2>outside help <span class="dim" style="font-size:9px">(off by default)</span></h2>
+   <div class="body">
+    <div class="row" style="margin-top:0">
+     <label class="radio" data-tip="Allow a failed static prop to be sent to an outside converter — only ever after you say yes on that job. The local path stays the default."><input type="checkbox" class="cy-checkbox" id="xa_enable"> enable external assist</label>
+    </div>
+    <div class="hint" id="xa_status">conversion stays on this machine unless you opt in per job. service: <span id="xa_service">gtax.dev glb→ydr (free tier ~3/day)</span> · used today: <span id="xa_used">0</span></div>
+    <div class="hint"><button class="btn mini" onclick="wzResetTips()" data-tip="Show all guided hints and wizard state fresh again.">reset guided tips &amp; wizard</button></div>
+   </div>
+  </div>
  </section>
 
  <!-- TAB 4: RIG WORKBENCH -->
  <section id="panel-rig" role="tabpanel" aria-labelledby="tab-rig" class="tab-panel hidden">
   <div class="card">
-   <h2>rig &amp; animation workbench</h2>
+   <h2>rig &amp; animation workbench<button type="button" class="cy-tip-i" data-tip="Pick which parts of a model move and how, then build it. Guided mode walks you through each step.">i</button></h2>
    <div class="body">
+    <div class="row" style="justify-content:flex-end;margin-top:0;gap:4px">
+     <span class="dim" style="font-size:10px">guided rigging</span>
+     <span id="wz_mode">
+      <button class="btn mini" type="button" data-wzmode="guided">guided</button>
+      <button class="btn mini" data-wzmode="expert">expert</button>
+     </span>
+    </div>
+    <div id="wz_bar" style="display:none"></div>
+    <div id="wz_card" style="display:none"></div>
     <div class="row" style="margin-top:0">
      <select id="rig_file" style="flex:1"></select>
      <select id="rig_atype">
@@ -2982,6 +3048,7 @@ body.prec .disc-hero .opt label.radio:has(input.cy-checkbox:checked){
         <option value="turret">turret (yaw)</option>
         <option value="barrel">barrel (pitch)</option>
         <option value="rotor">rotor (spin)</option>
+        <option value="thruster_tilt">tilting thruster</option>
         <option value="gimbal">gimbal</option>
         <option value="trash">trash</option>
        </select>
@@ -3103,6 +3170,7 @@ function kindChanged(){
  const k=document.querySelector('input[name=kind]:checked').value;
  $('posesrow').style.display=k==='snapshot'?'':'none';
  $('pedrow').style.display=k==='ped'?'':'none';
+ wzKindHint();
 }
 document.querySelectorAll('input[name=kind]').forEach(r=>r.addEventListener('change',kindChanged));
 const dc=$('dropcard');
@@ -3168,7 +3236,7 @@ async function sfSearch(more){
   +(lics.length?'&lic='+lics.join(','):''));
  if(r.error){$('sf_res').innerHTML='<div class="empty">'+esc(r.error)+'</div>';return;}
  SF.next=r.next; SF.results=more?SF.results.concat(r.results):r.results;
- $('sf_res').innerHTML=SF.results.length?SF.results.map((m,i)=>`<div class="item" style="cursor:pointer" onclick="sfPick(${i})">
+ $('sf_res').innerHTML=SF.results.length?SF.results.map((m,i)=>`<div class="item" style="cursor:pointer" onclick="sfPick(${i})" data-tip="Preview this model and fill the convert form for it.">
   <div class="top"><img src="${esc(m.thumb)}" style="width:44px;height:28px;object-fit:cover;border:1px solid var(--fgs)" onerror="this.style.display='none'">
    <span class="nm" style="font-size:11px">${esc(m.name)}</span>
    <span class="sub">by ${esc(m.author)} \u00B7 ${esc(m.license)}${m.animations?` \u00B7 ${m.animations} anim`:''} \u00B7 ${Math.round(m.faces/1000)}k faces</span></div></div>`).join('')
@@ -3234,7 +3302,7 @@ const VIEWBTN={details:'details',preview:'preview',grid:'grid'};
 function propMeta(r){
  const k=r.asset_type==='ped'?'PED CLOTH':(KIND[r.motion]||'STATIC');
  const gentag=r.target_generation==='enhanced'?'GEN9':(r.name.endsWith('_g9')?'GEN9':'GEN8');
- const tags=`<span class="tag ${KINDTAG[k]||''}">${k}</span><span class="tag">${gentag}</span>${r.texture_mode==='ytd'?'<span class="tag amb">YTD</span>':''}${r.test?'<span class="tag qar">TEST</span>':''}`;
+ const tags=`<span class="tag ${KINDTAG[k]||''}">${k}</span><span class="tag">${gentag}</span>${r.texture_mode==='ytd'?'<span class="tag amb">YTD</span>':''}${r.test?'<span class="tag qar">TEST</span>':''}${(r.provenance&&r.provenance.external_assist)?'<span class="tag vio" data-tip="Converted by an outside service with your per-job consent, then imported and gate-checked. Not produced by the local pipeline.">EXTERNAL TOOL</span>':''}${r.asset_type==='ped'?'<span class="tag amb" data-tip="A ped resource is a drawable dictionary — it only appears in-game when a script spawns/uses it.">NEEDS SCRIPT</span>':''}`;
  return {k,gentag,tags};
 }
 function propRenders(r,h){
@@ -3246,12 +3314,12 @@ function propRenders(r,h){
    <span class="cap">${lbl(f)}</span></div>`;};
  const grid=`<div class="render-grid-6">${r.renders.assembly.map(f=>im(f)).join('')}</div>`;
  const prt=r.renders.parts.length&&h>95
-  ?`<details style="margin-top:6px"><summary>individual parts (${r.renders.parts.length})</summary>
+  ?`<details style="margin-top:6px"><summary data-tip="Renders of each moving part, checked separately.">individual parts (${r.renders.parts.length})</summary>
    <div class="render-grid-6" style="margin-top:6px">${r.renders.parts.map(f=>im(f)).join('')}</div></details>`:'';
  return grid+prt;
 }
 function propTech(r){
- return `<details><summary>technical details</summary><div class="kv">`+
+ return `<details><summary data-tip="Sizes, triangles and how the build was made.">technical details</summary><div class="kv">`+
  `spawn name   ${esc(r.name)}\nsource file  ${esc(r.source||'\u2014')}\npolygons     ${esc(r.tris??'\u2014')}\n`+
  `runtime check ${esc(r.runtime_validation||'NOT_PERFORMED')} (never spawned in-game yet)\n`+
  `license      ${esc(r.license||'\u2014')}\nresource     build/resources/[sketchfab_props]/${esc(r.name)}/\n`+
@@ -3277,14 +3345,14 @@ function renderReady(s){
   html='<div class="libtable-wrap" tabindex="0"><table class="libtable"><thead><tr>'+
    '<th>Spawn Name</th><th>Tags</th><th>Dimensions</th><th>Polygons</th><th>Runtime Check</th><th>Built</th></tr></thead><tbody>'+
    real.map(row).join('')+'</tbody></table></div>'+
-   (fx.length?`<details class="fxgrp"><summary>test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>
+   (fx.length?`<details class="fxgrp"><summary data-tip="Pipeline test builds, not usable props.">test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>
     <div class="libtable-wrap"><table class="libtable"><tbody>`+fx.map(row).join('')+'</tbody></table></div></details>':'');
  }else if(viewMode==='grid'){
   const card=r=>{const m=propMeta(r);
    return `<div class="item"><div class="top"><span class="nm" onclick="copyNm(this,'${esc(r.name)}')" title="copy spawn name">${esc(r.name)}</span>${m.tags}</div>
    ${propRenders(r,95)||'<div class="dim" style="margin-top:6px">no renders</div>'}</div>`;};
   html='<div class="libgrid">'+real.map(card).join('')+'</div>'+
-   (fx.length?`<details class="fxgrp"><summary>test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>
+   (fx.length?`<details class="fxgrp"><summary data-tip="Pipeline test builds, not usable props.">test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>
     <div class="libgrid">`+fx.map(card).join('')+'</div></details>':'');
  }else{
   const card=r=>{const m=propMeta(r);
@@ -3294,7 +3362,7 @@ function renderReady(s){
     <span class="sub">size <b>${dims(r)}</b> \u00B7 ${ago(r.built_at)}</span></div>
     ${propTech(r)}</div>`;};
   html=(real.length?real.map(card).join(''):'<div class="empty">NOTHING PUBLISHED YET \u2014 CONVERT SOMETHING</div>')
-   +(fx.length?`<details class="fxgrp"><summary>test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>`+
+   +(fx.length?`<details class="fxgrp"><summary data-tip="Pipeline test builds, not usable props.">test fixtures (${fx.length}) \u2014 pipeline gate tests, not usable props</summary>`+
     fx.map(card).join('')+`</details>`:'');
  }
  rl.innerHTML=html;
@@ -3343,9 +3411,9 @@ function render(){
   :vis.map(q=>`<div class="prob${q.dismissed?' done':''}">
    <div class="head"><span class="h">${esc(q.headline)}</span>
     <span class="job">${esc(q.job)} \u00B7 ${ago(q.time)}</span>
-    <span class="acts">${q.dismissed?'':'<button class="btn mini rose" onclick="dismiss(\''+esc(q.job)+'\')">dismiss</button>'}</span></div>
+    <span class="acts">${q.dismissed?'':'<button class="btn mini rose" data-tip="Hide this problem from the list. It is not deleted." onclick="dismiss(\''+esc(q.job)+'\')">dismiss</button>'}</span></div>
    <div class="sug">${esc(q.suggestion)}</div>
-   ${q.extra?`<details><summary>raw report</summary><div class="kv err">${esc(JSON.stringify({reason:q.reason,...q.extra},null,1))}</div></details>`:''}
+   ${q.extra?`<details><summary data-tip="The technical failure record, for bug reports.">raw report</summary><div class="kv err">${esc(JSON.stringify({reason:q.reason,...q.extra},null,1))}</div></details>`:''}
   </div>`).join('')+
   (!showAllQ&&qs.length>8?`<div class="empty" style="padding:8px">\u2026and ${qs.length-8} more \u2014 click "show all"</div>`:'');
  pl.dataset.sig=psig;
@@ -3359,8 +3427,9 @@ function render(){
   :s.jobs.map(j=>`<div class="item"><div class="top">
   <span class="tag ${j.status==='running'?'run':(j.status==='failed'?'qar':'pub')}">${j.status.toUpperCase()}</span>
   <span class="mono" style="font-size:11px">${esc(j.label)}</span>
+  ${j.status==='failed'?'<a class="plain" href="#" onclick="toggleProblemsRail();return false" data-tip="Open the problems panel for why it failed and what to do next." style="font-size:10px">what now?</a>':''}
   <span class="jobtime" style="margin-left:auto">${esc(j.started)}</span></div>
-  ${j.tail?`<details><summary>log</summary><div class="kv">${esc(j.tail)}</div></details>`:''}</div>`).join('');
+  ${j.tail?`<details><summary data-tip="Raw build output for this job.">log</summary><div class="kv">${esc(j.tail)}</div></details>`:''}</div>`).join('');
  jl.dataset.sig=jsig;
  if(atBottom)jl.scrollTop=jl.scrollHeight;
  }
@@ -3371,6 +3440,7 @@ function render(){
   rigPoll();
  }
  updateProgress();
+ wzAfterRender();
 }
 async function refresh(){STATE=await api('/api/state');render();}
 document.addEventListener('DOMContentLoaded',()=>{
@@ -3773,7 +3843,7 @@ async function rigPoll(){
  if(!RIG_JOB)return;
  const j=(STATE.jobs||[]).find(x=>x.id===RIG_JOB);if(j&&j.status==='running')return;
  const r=await api('/api/preview?job='+RIG_JOB);
- if(r.status==='running'||r.error){if(r.error){rigStatus('preview failed: '+(r.tail||r.error));RIG_JOB=null;$('rig_prevbtn').disabled=false;}return;}
+ if(r.status==='running'||r.error){if(r.error){rigStatus('preview failed: '+(r.tail||r.error));RIG_JOB=null;$('rig_prevbtn').disabled=false;wzOnPreview(false,r);}return;}
  RIG_JOB=null;$('rig_prevbtn').disabled=false;
  RigWorkbench.init($('rig_canvas'),r);
  rigPopulateBones();rigRenderParts();
@@ -3785,6 +3855,7 @@ async function rigPoll(){
  }
  rigStatus('loaded '+r.parts.length+' parts'+(r.bones.length?' + '+r.bones.length+' donor bones':'')
   +'. click parts, assign roles, then compile.');
+ wzOnPreview(true,r);
 }
 function rigPopulateBones(){
  const sel=$('rig_bone');
@@ -3847,8 +3918,9 @@ function rigRenderParts(){
   return`<div style="opacity:${tr?0.45:1};cursor:pointer" onclick="rigPickPart(${p.id})">`
    +`${tr?'&#10007; ':'&#9632; '}<span style="color:${tr?'#666':p.color}">${esc(p.name)}</span>`
    +` <span class="dim">${esc(p.role)}${p.bone_lock?'→'+esc(p.bone_lock):''} i${p.island_id}</span>`
-   +(tr?` <a onclick="event.stopPropagation();rigRestore(${p.id})" style="cursor:pointer">restore</a>`:'')
+   +(tr?` <a onclick="event.stopPropagation();rigRestore(${p.id})" style="cursor:pointer" data-tip="Bring this part back into the export.">restore</a>`:'')
    +`</div>`;}).join('');
+ wzAfterRender();
 }
 function rigPickPart(id){RigWorkbench.selectIds([id]);rigSelInfo();}
 function rigRestore(id){RigWorkbench.part(id).role='smooth_skin';rigRenderParts();}
@@ -3862,6 +3934,645 @@ async function rigCompile(){
  if(r.error)rigStatus(r.error);else rigStatus('compile job '+r.job+' launched — watch the jobs log.');
  refresh();
 }
+/* ── rig wizard (GUIDED_UX_SPEC §6–§9) ──────────────────── */
+const WZ_STEPS=['S0','S1','S2','S3','S4','S5','S6','S7','S8'];
+const WZ_LABEL={S0:'pick',S1:'type',S2:'preview',S3:'clean up',S4:'parts',S5:'pivots',S6:'motion',S7:'review',S8:'build'};
+const WZ_IDX={S0:0,S1:1,S2:2,S3:3,S4:4,S5:5,S6:6,S7:7,S8:8,S9:9,S9F:9};
+const WZ_BRANCH={
+ static:{roles:[['hull','main body'],['trash','leave out']],anims:['none'],skip:{S5:1,S6:1}},
+ machine:{roles:[['turret','swivels left/right'],['barrel','tilts up/down'],['hull','main body'],['gimbal','hinges'],['rotor','spins nonstop'],['trash','leave out']],anims:['none','tank_aim','source_clip'],skip:{}},
+ drone:{roles:[['hull','main body'],['rotor','spinning propeller'],['thruster_tilt','tilting thruster'],['gimbal','hinge / gun mount'],['trash','leave out']],anims:['none','drone_spin','source_clip'],cap:'drone_reactive_flight'},
+ ped:{roles:[['smooth_skin','bends with the body'],['rigid_bone','stays stiff on one bone'],['trash','leave out']],anims:['ped_walk','ped_squat'],skip:{S5:1,S6:1}},
+ mech_ped:{roles:[['rigid_bone','stays stiff on one bone'],['smooth_skin','bends with body'],['trash','leave out']],anims:['ped_walk','ped_squat'],skip:{S5:1}},
+ mech_prop:{roles:[['hull','legs + pelvis / base'],['turret','swiveling torso'],['barrel','aiming arm or gun'],['gimbal','hinge'],['rotor','spins'],['trash','leave out']],anims:['none','tank_aim','source_clip'],skip:{}},
+};
+WZ_BRANCH.clothing=WZ_BRANCH.ped;
+const WZ_CLS_TILES=[
+ ['static','static prop','one solid object'],
+ ['machine','machine','moving parts (turret, crane)'],
+ ['drone','drone','spinning rotors / thrusters'],
+ ['ped','humanoid character','walks on GTA\u2019s skeleton'],
+ ['clothing','clothing','wearable for a GTA body'],
+ ['mech_ped','mech — walks','humanoid machine (as character)'],
+ ['mech_prop','mech — stands','machine that aims / turns'],
+];
+let WZ={file:'',cls:null,clsSource:'',step:'S0',done:{},pending:{},islands:[],undo:[],compileName:'',compileAt:0,fail:null};
+try{const s=JSON.parse(localStorage.getItem('sig_wz')||'null');if(s&&s.file)WZ={...WZ,...s,undo:[]};}catch(e){}
+WZ.mode=localStorage.getItem('sig_wzmode')||'guided';
+function wzGuided(){return WZ.mode==='guided';}
+function wzSave(){
+ try{localStorage.setItem('sig_wz',JSON.stringify({file:WZ.file,cls:WZ.cls,clsSource:WZ.clsSource,step:WZ.step,done:WZ.done,pending:WZ.pending}));}catch(e){}
+}
+function wzSetMode(m){
+ WZ.mode=m;localStorage.setItem('sig_wzmode',m);
+ document.querySelectorAll('#wz_mode .btn').forEach(b=>b.classList.toggle('on',b.dataset.wzmode===m));
+ if(m==='expert'){wzClearDim();$('wz_bar').style.display='none';$('wz_card').style.display='none';return;}
+ if(WZ.step==='S0'&&$('rig_file').value)WZ.step='S1';
+ wzRender();
+}
+document.querySelectorAll('#wz_mode .btn').forEach(b=>b.addEventListener('click',()=>wzSetMode(b.dataset.wzmode)));
+const WZ_DIM={
+ S3:['#rig_animbar','#rig_role_row','#rig_pivot_row'],
+ S4:['#rig_animbar','#rig_pivot_row'],
+ S5:['#rig_animbar','#rig_role_row'],
+};
+function wzClearDim(){document.querySelectorAll('.wz-dim').forEach(e=>e.classList.remove('wz-dim'));}
+function wzApplyDim(){
+ wzClearDim();
+ if(!wzGuided())return;
+ (WZ_DIM[WZ.step]||[]).forEach(sel=>{const el=document.querySelector(sel);if(el)el.classList.add('wz-dim');});
+}
+function wzReset(file){
+ WZ={...WZ,file:file||'',cls:null,clsSource:'',step:'S0',done:{},pending:{},islands:[],undo:[],compileName:'',compileAt:0,fail:null};
+ wzSave();wzRender();
+}
+function wzGo(step){WZ.step=step;WZ.done[step]=true;wzSave();wzRender();}
+function wzClassify(f){
+ const n=(f||'').toLowerCase();
+ if(/\b(drone|quad|uav|copter)\b/.test(n))return['drone','name'];
+ if(/\b(mech|robot|walker|exo)\b/.test(n))return['mech_ped','name'];
+ if(/\b(shirt|jacket|hoodie|pants|outfit|dress|shoe|cloth|apparel)\b/.test(n))return['clothing','name'];
+ if(/\b(character|man|woman|soldier|npc|ped|girl|boy|human)\b/.test(n))return['ped','name'];
+ if(/\b(tank|turret|crane|heli|fan|turbine|car|vehicle|ship)\b/.test(n))return['machine','name'];
+ return['static','name'];
+}
+function wzParts(){return RigWorkbench.scene()?RigWorkbench.parts():[];}
+function wzIslands(){
+ const isl={};
+ wzParts().forEach(p=>{
+  const i=p.island_id,box=(isl[i]=isl[i]||{id:i,parts:[],min:[1e18,1e18,1e18],max:[-1e18,-1e18,-1e18]});
+  box.parts.push(p);
+  (p.v||[]).forEach(v=>{for(let k=0;k<3;k++){box.min[k]=Math.min(box.min[k],v[k]);box.max[k]=Math.max(box.max[k],v[k]);}});
+ });
+ const list=Object.values(isl);
+ list.forEach(b=>{
+  b.size=b.max.map((m,k)=>Math.max(0,m-b.min[k]));
+  b.vol=b.size[0]*b.size[1]*b.size[2];
+  b.c=b.min.map((m,k)=>(m+b.max[k])/2);
+ });
+ return list;
+}
+function wzBbox(parts){
+ const b={min:[1e18,1e18,1e18],max:[-1e18,-1e18,-1e18]};
+ parts.forEach(p=>(p.v||[]).forEach(v=>{for(let k=0;k<3;k++){b.min[k]=Math.min(b.min[k],v[k]);b.max[k]=Math.max(b.max[k],v[k]);}}));
+ b.size=b.max.map((m,k)=>Math.max(0,m-b.min[k]));
+ b.c=b.min.map((m,k)=>(m+b.max[k])/2);
+ return b;
+}
+function wzComputePending(){
+ WZ.pending={};
+ const parts=wzParts();if(!parts.length)return;
+ const reTrash=/ground|floor|plane|base|backdrop|env|sky|grid|shadow/i;
+ const reRotor=/prop|rotor|blade|fan|propeller|impeller/i;
+ const reTurret=/turret/i,reBarrel=/barrel|gun|cannon|weapon|arm\b/i;
+ const reRigid=/armor|armour|plate|helmet|visor|pad|gun|holster|shield/i;
+ const isls=wzIslands();
+ islSort=isls.slice().sort((a,b)=>b.vol-a.vol);
+ const main=islSort[0];
+ const outlier=new Set();
+ if(main&&isls.length>1){
+  const rad=Math.max(...main.size)/2;
+  isls.forEach(b=>{
+   if(b===main)return;
+   const d=Math.hypot(b.c[0]-main.c[0],b.c[1]-main.c[1],b.c[2]-main.c[2]);
+   if(b.vol<main.vol*0.05&&d>rad*1.5)b.parts.forEach(p=>outlier.add(p.id));
+  });
+ }
+ const ped=(WZ.cls==='ped'||WZ.cls==='clothing'||WZ.cls==='mech_ped');
+ parts.forEach(p=>{
+  let role=null;
+  if(reTrash.test(p.name)||outlier.has(p.id))role='trash';
+  else if(ped){
+   role=p.bind_kind.startsWith('BONE_PARENT')?'rigid_bone':'smooth_skin';
+   if(reRigid.test(p.name))role='rigid_bone';
+   if(WZ.cls==='mech_ped'&&role==='smooth_skin'&&!reRigid.test(p.name))role='rigid_bone';
+  }else{
+   if(WZ.cls==='drone'&&reRotor.test(p.name)){
+    const b=wzBbox([p]);const s=[...b.size].sort((x,y)=>y-x);
+    if(s[1]>0&&s[2]<s[1]*0.15)role='rotor';
+   }
+   if(!role&&WZ.cls!=='static'){
+    if(reTurret.test(p.name))role='turret';
+    else if(reBarrel.test(p.name))role='barrel';
+   }
+   if(!role&&WZ.cls==='drone'&&/thruster|nozzle|jet/i.test(p.name))role='thruster_tilt';
+   if(!role&&WZ.cls==='machine'&&/hinge|joint|arm\b/i.test(p.name))role='gimbal';
+  }
+  if(role&&role!==p.role)WZ.pending[p.id]=role;
+ });
+ // spin-track rotor rule: one euler axis moves >=300deg over the clip
+ const sa=RigWorkbench.scene()&&RigWorkbench.sourceAnim?RigWorkbench.sourceAnim():null;
+ if(sa&&sa.part_tracks){
+  for(const name in sa.part_tracks){
+   const tr=sa.part_tracks[name].filter(Boolean);
+   if(tr.length<3)continue;
+   const d=[0,0,0];
+   for(let i=1;i<tr.length;i++)for(let k=0;k<3;k++)d[k]+=Math.abs(tr[i][3+k]-tr[i-1][3+k]);
+   const spins=d.map(x=>x>5.24).filter(Boolean).length;
+   if(spins===1){
+    const p=parts.find(x=>x.name===name);
+    if(p&&p.role!=='trash'&&!ped&&WZ.cls==='drone'&&!WZ.pending[p.id])WZ.pending[p.id]='rotor';
+   }
+  }
+ }
+}
+function wzApplyPending(){
+ WZ.undo.push(wzParts().map(p=>[p.id,p.role]));
+ let n=0;
+ for(const id in WZ.pending){const p=RigWorkbench.part(+id);if(p&&WZ.pending[id]!==p.role){p.role=WZ.pending[id];n++;}}
+ WZ.pending={};rigRenderParts();return n;
+}
+function wzUndo(){
+ const snap=WZ.undo.pop();if(!snap){rigStatus('nothing to undo.');return;}
+ snap.forEach(([id,role])=>{const p=RigWorkbench.part(id);if(p)p.role=role;});
+ rigRenderParts();wzRender();
+}
+function wzAutoPivots(){
+ const groups={};
+ wzParts().forEach(p=>{
+  if(p.role==='trash'||p.role==='hull'||p.role==='smooth_skin'||p.role==='rigid_bone')return;
+  const key=p.role+'|'+p.island_id;(groups[key]=groups[key]||[]).push(p);
+ });
+ const bodyB=wzBbox(wzParts().filter(p=>p.role==='hull'||p.role==='smooth_skin'||p.role==='rigid_bone'));
+ return Object.entries(groups).map(([key,ps])=>{
+  const role=key.split('|')[0],b=wzBbox(ps);
+  let pivot=[b.c[0],b.c[1],b.c[2]],note='centre';
+  if(role==='rotor'){pivot=[b.c[0],b.c[1],b.c[2]];note='disc centre';
+   const s=[...b.size].sort((x,y)=>y-x);
+   if(s[1]>0&&s[2]<s[1]*0.15){const thin=b.size.indexOf(s[2]);
+    if(thin!==2){ps.forEach(p=>{p.rest_rot=thin===0?[0,90,0]:[90,0,0];});note='disc centre + lay-flat rest rot';}}}
+  else if(role==='turret'){pivot=[b.c[0],b.c[1],b.min[2]];note='bottom centre';}
+  else if(role==='gimbal'||role==='thruster_tilt'){
+   let best=0,bd=1e18;
+   for(let k=0;k<3;k++)for(const m of[0,1]){
+    const f=m?b.max[k]:b.min[k];
+    const c=b.c.map((x,j)=>j===k?f:x);
+    const d=Math.hypot(c[0]-bodyB.c[0],c[1]-bodyB.c[1],c[2]-bodyB.c[2]);
+    if(d<bd){bd=d;best=k*2+m;}
+   }
+   const k=best>>1;const c=b.c.slice();c[k]=best&1?b.max[k]:b.min[k];pivot=c;note='hull-side face';
+  }
+  else if(role==='barrel'){pivot=[b.c[0],b.c[1],b.min[2]];note='near mount';}
+  return{role,parts:ps,pivot,note};
+ });
+}
+function wzMovingClusterCount(){return wzAutoPivots().length;}
+function wzRender(){
+ if(!wzGuided()){
+  document.querySelectorAll('#wz_mode .btn').forEach(b=>b.classList.toggle('on',b.dataset.wzmode===WZ.mode));
+  return;
+ }
+ const bar=$('wz_bar'),card=$('wz_card');
+ bar.style.display='';card.style.display='';
+ const step=WZ.step,br=WZ_BRANCH[WZ.cls]||WZ_BRANCH.static;
+ bar.innerHTML=WZ_STEPS.map(s=>{
+  const cls=s===step?'cur':(WZ.done[s]?'done':(br.skip[s]?'skip':''));
+  const reached=WZ.done[s]||WZ_IDX[s]<WZ_IDX[step];
+  return `<span class="wzs ${cls}" ${reached?`onclick="wzGo('${s}')" style="cursor:pointer"`:''}>${WZ_LABEL[s]}${WZ.done[s]?' ✓':''}</span>`;
+ }).join('');
+ const P={
+  S0:()=>`<div class="wzt">1. Pick a model</div><div class="wzsub">Choose a file in the inbox picker above. ${(STATE.inbox||[]).length?'':'The inbox is empty — find a model on the Discover tab first.'}</div>`,
+  S1:()=>{const[sg,src]=wzClassify(WZ.file||$('rig_file').value);
+   return `<div class="wzt">2. What is it?</div><div class="wzsub">This decides which parts the wizard asks about${src==='name'?` — suggestion from the file name: <b>${sg}</b>`:''}.</div>
+   <div class="wzcls">${WZ_CLS_TILES.map(([c,l,d])=>`<button class="wzchip ${c===sg?'sug':''}" type="button" onclick="wzPickClass('${c}')" data-tip="${d}">${l}</button>`).join('')}</div>`;},
+  S2:()=>`<div class="wzt">3. Preview</div><div class="wzsub">Blender is baking a fast preview — usually seconds for small files.</div>`,
+  S3:()=>{
+   const isls=wzIslands().sort((a,b)=>b.vol-a.vol);
+   const sugCount=Object.values(WZ.pending).filter(r=>r==='trash').length;
+   return `<div class="wzt">4. Clean up</div><div class="wzsub">${isls.length} separate islands found. Junk (stands, cables, display bases) can be left out of the export.${sugCount?` ${sugCount} part(s) look like outliers — marked trash in the list (dashed outline).`:''}</div>
+   <div id="wz_islands" style="display:block">${isls.map(b=>`<div class="wzisl"><span style="color:${b.parts[0].color}">&#9632;</span> ${b.parts.length} part(s) · ${b.size.map(x=>x.toFixed(2)).join('×')} m ${b.parts.slice(0,3).map(p=>esc(p.name)).join(', ')}${b.parts.length>3?' …':''}</div>`).join('')}</div>
+   <div class="row" style="gap:6px;margin-top:8px"><button class="btn mini" onclick="wzTrashOutliers()">trash outlier islands</button><button class="btn mini" onclick="wzUndo()">undo</button><button class="btn mini go" onclick="wzGo('S4')">done — next</button></div>`;},
+  S4:()=>{
+   const left=wzParts().filter(p=>p.role!=='trash'&&!['hull','smooth_skin','rigid_bone'].includes(p.role)&&!WZ.done.S4);
+   const chips=(WZ_BRANCH[WZ.cls]||WZ_BRANCH.static).roles;
+   return `<div class="wzt">5. What does each part do?</div><div class="wzsub">Select parts (click or shift-drag), then tap a chip. Unassigned parts become the main body.${WZ.cls==='static'?' All parts were assigned main body automatically.':''}${Object.keys(WZ.pending).length?` ${Object.keys(WZ.pending).length} suggestion(s) pending (dashed outline) — apply or adjust.`:' '}</div>
+   <div id="wz_roles" style="display:flex">${chips.map(([r,l])=>`<button class="wzchip" type="button" data-tip="${r}" onclick="wzChipRole('${r}')">${l}</button>`).join('')}</div>
+   <div class="row" style="gap:6px;margin-top:8px"><button class="btn mini" onclick="wzApplyPending();wzRender()">apply suggestions</button><button class="btn mini" onclick="wzUndo()">undo</button><button class="btn mini go" onclick="wzRolesDone()">looks right — next</button></div>`;},
+  S5:()=>{
+   const cl=wzAutoPivots();
+   if(!cl.length)return `<div class="wzt">6. Pivots</div><div class="wzsub">No moving clusters — nothing needs a pivot.</div><div class="row"><button class="btn mini go" onclick="wzGo('S6')">next</button></div>`;
+   return `<div class="wzt">6. Where does each part turn?</div><div class="wzsub">Suggested pivots (the point it rotates around) — confirm to bake them into the recipe.</div>
+   ${cl.map((c,i)=>`<div class="wzisl"><span class="dim">${c.role}</span> ${c.parts.length} part(s) → ${c.note} (${c.pivot.map(x=>x.toFixed(2)).join(', ')}) <button class="btn mini" onclick="wzConfirmPivot(${i})">set</button></div>`).join('')}
+   <div class="row" style="gap:6px;margin-top:8px"><button class="btn mini go" onclick="wzConfirmAllPivots()">confirm all — next</button></div>`;},
+  S6:()=>{
+   const br2=WZ_BRANCH[WZ.cls]||WZ_BRANCH.static;
+   const names={none:'no motion',source_clip:'source clip',tank_aim:'tank aim',drone_spin:'drone spin',ped_walk:'walk',ped_squat:'squat'};
+   return `<div class="wzt">7. Motion</div><div class="wzsub">${WZ.cls==='ped'||WZ.cls==='clothing'||WZ.cls==='mech_ped'?'Preview only — GTA animates characters itself.':'Pick a preview animation. Capture records motion into the file.'}${br2.cap?` Capture defaults to <b>${br2.cap}</b> — records hover/tilt moves so it looks alive in-game.`:''}</div>
+   <div class="row" style="flex-wrap:wrap;gap:6px">${br2.anims.map(a=>`<button class="btn mini" onclick="rigAnim('${a}');wzDone.S6=1">${names[a]||a}</button>`).join('')}</div>
+   <div class="row" style="margin-top:8px"><button class="btn mini go" onclick="wzGo('S7')">next — review</button></div>`;},
+  S7:()=>{
+   const counts={};wzParts().forEach(p=>{counts[p.role]=(counts[p.role]||0)+1;});
+   return `<div class="wzt">8. Review &amp; build</div><div class="wzsub">Check the summary — the same fields live on the Convert form.</div>
+   <div class="kv" style="font-size:11px">
+    <div>name: <input id="wz_name" type="text" style="width:180px" value="${esc($('f_name').value)}" onchange="$('f_name').value=this.value"></div>
+    <div>height: <input id="wz_height" type="number" step="0.1" style="width:80px" value="${esc($('f_height').value)}" onchange="$('f_height').value=this.value"> m</div>
+    <div>collision: ${esc($('f_col').value)} · generation: ${esc($('f_gen').value)}</div>
+    <div>parts: ${Object.entries(counts).map(([r,n])=>`${r}×${n}`).join(' · ')}</div>
+    ${WZ.cls==='ped'||WZ.cls==='clothing'||WZ.cls==='mech_ped'?'<div class="wzwarn">The result is a character file (.ydd) that needs a script or clothing setup to appear in-game.</div>':''}
+   </div>
+   <div class="row" style="margin-top:8px;gap:6px"><button class="btn mini go" onclick="wzCompile()">&#9656; COMPILE TO RAGE</button><button class="btn mini" onclick="wzGo('S4')">back to parts</button></div>`;},
+  S8:()=>`<div class="wzt">Building…</div><div class="wzsub">The build is running — watch the pipeline strip above. This takes 1–3 min.</div>`,
+  S9:()=>`<div class="wzt">Done</div><div class="wzsub"><b>${esc(WZ.compileName)}</b> published. Spawn it in-game with that name.</div>
+   <div class="row" style="gap:6px"><button class="btn mini" onclick="activateTab('library')">open in library</button><button class="btn mini" onclick="wzReset('')">rig another</button></div>`,
+  S9F:()=>{const f=WZ.fail||{reason:'unknown',job:''};
+   const map=wzFailMap(f.reason);
+   return `<div class="wzt">Build stopped</div><div class="wzsub"><b>${esc(map.headline)}</b> — ${esc(f.reason)}${f.job?' (job '+esc(f.job)+')':''}</div>
+   <div class="row" style="gap:6px"><button class="btn mini go" onclick="wzGo('${map.step}')">fix it — ${WZ_LABEL[map.step]||map.step}</button><button class="btn mini" onclick="toggleProblemsRail()">details</button></div>
+   <div id="xa_card"></div>`;},
+ };
+ card.innerHTML=(P[step]||P.S0)();
+ if(step==='S9F'){const xc=$('xa_card');if(xc&&window.xaCardHtml)xc.innerHTML=xaCardHtml();}
+ wzApplyDim();hlApply();
+}
+function wzFailMap(reason){
+ const r=reason||'';
+ if(/ERR_GATE3_DIMS/.test(r))return{headline:'Size is outside what GTA accepts (2 cm–80 m)',step:'S7'};
+ if(/ERR_GATE4_NAME_COLLISION|_ARCHETYPE_COLLISION/.test(r))return{headline:'That name is taken by a different model',step:'S7'};
+ if(/ERR_PED_NO_WEIGHTS|_SKELETON_MISMATCH/.test(r))return{headline:'The character could not be attached to the skeleton',step:'S4'};
+ if(/ERR_PED_APPAREL_YMT/.test(r))return{headline:'Expected: clothing packs cannot register yet',step:'S1'};
+ if(/triangle|budget/i.test(r))return{headline:'Too detailed for a GTA character — trash hidden or interior parts',step:'S3'};
+ return{headline:'The build failed — see the raw reason',step:'S7'};
+}
+function wzPickClass(cls){
+ WZ.cls=cls;WZ.clsSource='user';WZ.file=$('rig_file').value;
+ const ped=(cls==='ped'||cls==='clothing'||cls==='mech_ped');
+ $('rig_atype').value=ped?'ped':'prop';
+ if(cls==='clothing'&&!WZ.warned_ymt){
+  rigStatus('heads up: wearable clothing packs need a .ymt (clothing registration) this tool cannot make yet — the mesh still converts.');
+ }
+ wzSave();wzGo('S2');rigPreview();
+}
+function wzChipRole(role){
+ $('rig_role').value=role;rigApplyRole();
+}
+function wzRolesDone(){
+ const left=wzParts().filter(p=>!p.role||p.role==='');
+ left.forEach(p=>{p.role=(WZ.cls==='ped'||WZ.cls==='clothing')?'smooth_skin':'hull';});
+ rigRenderParts();
+ const br=WZ_BRANCH[WZ.cls]||WZ_BRANCH.static;
+ wzGo(br.skip.S5?(br.skip.S6?'S7':'S6'):'S5');
+}
+function wzTrashOutliers(){wzApplyPending();wzRender();}
+function wzConfirmPivot(i){
+ const c=wzAutoPivots()[i];if(!c)return;
+ c.parts.forEach(p=>{p.pivot=c.pivot.slice();});
+ rigStatus('pivot set for '+c.role+' cluster ('+c.parts.length+' parts).');wzRender();
+}
+function wzConfirmAllPivots(){wzAutoPivots().forEach(c=>c.parts.forEach(p=>{p.pivot=c.pivot.slice();}));wzGo('S6');}
+function wzCompile(){
+ const nm=$('wz_name')?$('wz_name').value.trim():'';
+ if(nm)$('f_name').value=nm;
+ const h=$('wz_height')?parseFloat($('wz_height').value):0;
+ if(h>0)$('f_height').value=h;
+ WZ.compileName=nm||('sf_'+(WZ.file||'asset').replace(/\.[^.]+$/,'').toLowerCase().replace(/[^a-z0-9_]/g,'_'));
+ WZ.compileAt=Date.now();WZ.fail=null;
+ wzGo('S8');rigCompile();
+}
+function wzOnPreview(ok,data){
+ if(!wzGuided())return;
+ if(!ok){
+  const t=(data&&(data.tail||data.error))||'preview failed';
+  $('wz_card').innerHTML=`<div class="wzt">Preview failed</div><div class="wzsub">${
+   /timed?out/i.test(t)?'The preview took too long. Very heavy models can take minutes; try again.':
+   /donor/i.test(t)?'Character mode needs your donor skeleton (see SETUP.md).':esc(t)}</div>
+   <div class="row"><button class="btn mini go" onclick="rigPreview()">retry</button></div>`;
+  $('wz_card').style.display='';return;
+ }
+ // geometry re-check: skinned parts while cls!=ped → offer character mode
+ const skinned=wzParts().some(p=>p.bind_kind.startsWith('SKINNED'));
+ if(skinned&&!['ped','clothing','mech_ped'].includes(WZ.cls)){
+  rigStatus('this model has a skeleton — the "humanoid character" class can use it.');
+ }
+ wzComputePending();
+ if(WZ.cls==='static'){wzParts().forEach(p=>{if(p.role!=='trash')WZ.pending[p.id]=WZ.pending[p.id]||'hull';});}
+ const isls=wzIslands();
+ const trashSug=Object.values(WZ.pending).filter(r=>r==='trash').length;
+ WZ.done.S2=true;
+ wzGo(isls.length<=1&&trashSug===0?'S4':'S3');
+ if(WZ.step==='S4'){WZ.undo.push(wzParts().map(p=>[p.id,p.role]));wzApplyPending();wzRender();}
+}
+function wzAfterRender(){
+ if(!wzGuided())return;
+ const f=$('rig_file').value||'';
+ if(f&&f!==WZ.file){WZ.file=f;WZ.cls=null;WZ.clsSource='';WZ.step='S1';WZ.done={S0:1};WZ.pending={};WZ.undo=[];wzSave();}
+ // build watch (S8): published with newer built_at or new quarantine
+ if(WZ.step==='S8'&&WZ.compileAt){
+  const hit=(STATE.published||[]).find(r=>r.name===WZ.compileName);
+  const q=(STATE.quarantined||[]).slice(-1)[0];
+  if(q&&q.time&&new Date(q.time).getTime()>=WZ.compileAt-3000){WZ.fail={reason:q.reason||'unknown',job:q.job||''};wzGo('S9F');}
+  else if(hit){wzGo('S9');}
+ }
+ wzApplyDim();wzPipeCap();
+ // pending hatch on part rows
+ const pl=$('rig_parts');
+ if(pl&&RigWorkbench.scene()){
+  const parts=RigWorkbench.parts();
+  [...pl.children].forEach((row,i)=>{
+   const p=parts[i];if(!p)return;
+   row.classList.toggle('wz-pend',WZ.pending[p.id]!=null);
+  });
+ }
+ hlApply();
+}
+function wzKindHint(){
+ const k=document.querySelector('input[name=kind]:checked');
+ const el=$('wz_kindhint');if(!el||!k)return;
+ const hints={static:'Solid object — straight to game files.',
+  snapshot:'Freezes poses into separate props — pick how many below.',
+  multi:'Splits moving parts automatically. For control over each part, rig it first instead.',
+  ped:'Needs a donor skeleton (a GTA bone set from your own copy — see SETUP.md). Collision is set to none automatically. Clothing packs cannot fully register yet (.ymt).'};
+ el.innerHTML=esc(hints[k.value]||'')+(k.value==='multi'?' <a class="plain" href="#" onclick="wzRigFirst();return false">rig it first → Rig Workbench</a>':'');
+ // ymt early warning
+ const warn=$('wz_ymtwarn');
+ if(warn){
+  const show=k.value==='ped'||(($('f_adv')||{}).value||'').includes('apparel_pack');
+  warn.style.display=show?'':'none';
+  if(show&&!WZ.ymtAck)$('convertbtn').disabled=true;else if(!show)$('convertbtn').disabled=false;
+ }
+ // ped: force collision none + restore on switch back
+ const col=$('f_col');
+ if(k.value==='ped'){if(col.value!=='none'){WZ.colPrev=col.value;col.value='none';}col.disabled=true;}
+ else{if(col.disabled){col.disabled=false;if(WZ.colPrev)col.value=WZ.colPrev;}}
+}
+function wzRigFirst(){
+ const f=picked?picked.name:($('rig_file').value||'');
+ if(f){$('rig_file').value=f;WZ.file=f;}
+ activateTab('rig');
+}
+function wzNameCheck(){
+ const el=$('f_name');
+ el.value=el.value.toLowerCase().replace(/[^a-z0-9_]/g,'_');
+ const w=$('wz_namewarn');if(!w)return;
+ const taken=(STATE.published||[]).some(r=>r.name===el.value);
+ w.textContent=taken?'Already used. Re-converting the same file updates it; a different file with this name will be rejected.':'';
+}
+function wzHeightCheck(){
+ const w=$('wz_hwarn');if(!w)return;
+ const h=parseFloat($('f_height').value);
+ w.textContent=(h&&(h>80||h<0.02))?'GTA rejects props outside 0.02–80 m — this will fail at gate 3.':'';
+}
+function wzPipeCap(){
+ const el=$('wz_pipecap');if(!el)return;
+ const t=$('pipeline-status').textContent;
+ const m={import:'reading the file',normalize:'shrinking and cleaning the model',collision:'building the bump shape (collision)',export:'writing the game files',publish:'checking and publishing'};
+ const hit=Object.keys(m).find(k=>t.toLowerCase().includes(k));
+ el.textContent=hit?('step: '+m[hit]):'';
+}
+// ── discover-tab guidance markup is wired below ──
+$('f_name').addEventListener('input',wzNameCheck);
+$('f_height').addEventListener('input',wzHeightCheck);
+$('wz_ymtack').addEventListener('change',e=>{
+ WZ.ymtAck=e.target.checked;
+ if(e.target.checked)$('convertbtn').disabled=false;
+});
+document.querySelectorAll('#wz_mode .btn').forEach(b=>b.classList.toggle('on',b.dataset.wzmode===WZ.mode));
+wzKindHint();
+if(wzGuided())wzRender();
+/* ── external assist (GUIDED_UX_SPEC §10, plan Q1-b) ────── */
+function xaOn(){return localStorage.getItem('sig_xa')==='1';}
+const xaEl=$('xa_enable');
+if(xaEl){
+ xaEl.checked=xaOn();
+ xaEl.addEventListener('change',()=>localStorage.setItem('sig_xa',xaEl.checked?'1':'0'));
+}
+async function xaStatus(){
+ const el=$('xa_used');if(!el)return;
+ try{const r=await api('/api/xa/status');
+  el.textContent=r.used_today+(r.has_key?'':' (free tier, counted locally)');
+  $('xa_service').textContent=r.service;}catch(e){}
+}
+xaStatus();
+function wzResetTips(){
+ ['sig_wz','sig_wzmode','sig_help'].forEach(k=>localStorage.removeItem(k));
+ location.reload();
+}
+function xaEligible(){
+ if(!xaOn()||WZ.cls!=='static')return null;
+ const q=(STATE.quarantined||[]).slice(-1)[0];
+ if(!q||!/ERR_WORKER_FAILED|ERR_EXPORT_ARTIFACT_MISSING|ERR_GATE1|ERR_GATE2_YTYP_INVALID/.test(q.reason||''))return null;
+ return q;
+}
+function xaCardHtml(){
+ const q=xaEligible();if(!q)return '';
+ const lic=($('f_lic').value||'').trim();
+ const warn=/nd|noncommercial|non-commercial/i.test(lic)||!lic
+  ?'<div class="wzwarn">Check that the licence lets you upload the model to another service.</div>':'';
+ return `<details style="margin-top:8px;border:1px solid var(--viol);border-radius:4px;padding:8px 10px">
+  <summary style="color:var(--viol);cursor:pointer" data-tip="Send this file to an outside converter — only after you tick the box below. The local path is always tried first.">Try an outside converter (optional)</summary>
+  <div style="font-size:11px;margin-top:6px">Uploads <b>${esc(WZ.file||$('rig_file').value)}</b>${lic?` (licence: ${esc(lic)})`:''} to the configured service and imports the result with provenance marked.</div>${warn}
+  <label style="display:block;margin-top:6px;font-size:11px"><input type="checkbox" id="xa_ack"> I choose to send this model to the outside converter myself. The local pipeline stays the default.</label>
+  <div class="row" style="margin-top:6px;gap:6px"><button class="btn mini" id="xa_go" disabled onclick="xaGo()">send + import</button><span class="dim" id="xa_pill" style="font-size:10px">not started</span></div>
+ </details>`;
+}
+$('wz_card')&&Object.defineProperty(window,'xaGo',{value:async function(){
+ const f=WZ.file||$('rig_file').value;
+ const pill=$('xa_pill');pill.textContent='sending…';
+ const r=await api('/api/xa/convert',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({file:f,consent:true})});
+ if(r.error){pill.textContent='failed: '+r.error;return;}
+ pill.textContent='imported as '+r.name+' ✓';
+ rigStatus('external result imported as '+r.name+' — marked EXTERNAL TOOL in the library.');
+ refresh();
+}});
+document.addEventListener('change',e=>{
+ if(e.target.id==='xa_ack'){const g=$('xa_go');if(g)g.disabled=!e.target.checked;}
+});
+
+/* ── help layer (GUIDED_UX_SPEC §4) ─────────────────────── */
+const HL_COPY={
+ '#st_status':"Green = idle and ready. Cyan = a conversion is running.",
+ '#st_ready':"The last finished build and how long ago it completed.",
+ '#st_prob':"Conversions that failed and why.||Dismissing hides a problem; it does not delete it.",
+ '#hl_toggle':"Turn hover help on or off.||The small i buttons still work when this is off.",
+ '#pipeline-progress':"How far the running build has got.",
+ '#pipeline-status':"What the converter is doing right now, in plain words.",
+ '#tab-discover':"Find models and convert them into game files.",
+ '#tab-library':"Everything built so far, with previews.",
+ '#tab-rig':"Pick which parts move and how, before building.",
+ '#tab-settings':"Account, appearance and maintenance tools.",
+ '#qtoggle':"Show every problem, or only the most recent.",
+ '#sf_q':"Search Sketchfab for free downloadable models. Press Enter to search.||If you skip it: drop your own file in the convert box instead.",
+ '#sf_anim':"Only show models that come with movement.||If you skip it: all models are listed.",
+ '#sf_rig':"Only show models that come with a skeleton (bones for posing).||If you skip it: all models are listed.",
+ '.sflic':"Only show this licence. CC BY means you must credit the creator.||If all are unchecked: every licence shows, including non-commercial.",
+ '#sfbtn':"Downloads this model and starts converting it with the form settings below.",
+ 'button[onclick*="more"]':"Load the next page of search results.",
+ '#dropcard':"Drop a model file here, or click to browse. .glb .gltf .fbx .obj .zip all work.",
+ '#f_name':"The name you will type in-game to spawn it. Lowercase letters, numbers, _ only.||If you skip it: made from the file name, starting with sf_.",
+ 'input[name=kind][value=static]':"One solid object that never moves: crates, statues, furniture.||This is the default.",
+ 'input[name=kind][value=snapshot]':"Freezes a few poses of an animated model as separate props to swap between.||If you skip it: only the first pose is kept.",
+ 'input[name=kind][value=multi]':"Splits parts that move (rotors, turrets) so they can spin or aim in-game. For fine control, use the Rig Workbench tab instead.",
+ 'input[name=kind][value=ped]':"Rigged character or outfit for GTA bodies. Needs a donor skeleton (a GTA character's bone set) set up first. Clothing packs can't fully register yet (.ymt).",
+ '#f_poses':"How many freeze-frames to keep from the animation (flipbook).",
+ '#f_push':"Push snapshot poses this many metres apart so they don't overlap.",
+ '#f_weights':"Keep the file's own bone weights.||Off = parts are attached whole, no bending.",
+ '#f_height':"Resize so it's exactly this tall, in metres. 1.8 = a person, 3 = a door frame.||If you skip it: keeps the file's own size.",
+ '#f_col':"Collision (the invisible bump shape). Convex hull fits most props; none for walk-through.||If you skip it: convex hull is used. Characters always use none.",
+ 'input[name=tex][value=embed]':"Textures packed inside the prop file.||Simplest option.",
+ 'input[name=tex][value=ytd]':"Textures in a separate shared file (.ytd) — better when several props share them.",
+ '#f_gen':"Which GTA version to build for. Legacy works on most servers. Both makes two copies, the second ending in _g9.",
+ '#f_lic':"Licence and source link, saved in the build report so credit is never lost. Filled automatically for Sketchfab picks.",
+ '#f_url':"Licence and source link, saved in the build report so credit is never lost. Filled automatically for Sketchfab picks.",
+ '#f_adv':"Expert settings as raw JSON. Anything here wins over the form.||Leave it empty unless a guide tells you otherwise.",
+ '#convertbtn':"Starts the conversion (about 1–3 min). Progress shows in the log on the right.",
+ '#f_path':"Convert a file that is already on this computer — paste its full path.",
+ 'a[onclick*="showPath"]':"Convert a file that is already on this computer — paste its full path.",
+ 'a[onclick*="sweep"]':"Convert every file waiting in inbox/ with its own settings, one at a time.",
+ 'button[onclick*="runPath"]':"Convert the file at the pasted path.",
+ '#copylog':"Copy the conversion log to the clipboard.",
+ '[data-view="details"]':"Table view: names, sizes, tags.||Your choice is remembered.",
+ '[data-view="preview"]':"Card view with rendered previews of each build.",
+ '[data-view="grid"]':"Thumbnail contact sheet.",
+ 'input[name=uitheme]':"Interface look. Classic neon or the flatter workbench theme.",
+ '#sf_login':"Connect your own Sketchfab account so downloads work.||Search works without it; downloads don't.",
+ '#sf_logout':"Disconnect the Sketchfab account on this computer.",
+ '#sf_cid':"OAuth client id from your own Sketchfab app (sketchfab.com, developers, oauth).",
+ 'button[onclick*="sfSaveCid"]':"Save the client id on this computer.",
+ '#sf_tok':"Or paste an API token from Sketchfab settings instead of signing in.",
+ 'button[onclick*="sfSaveToken"]':"Save the token on this computer. It is stored under build/, never in the page.",
+ '#rig_file':"Pick a model waiting in the inbox to rig. Files appear here after Download, or when dropped into inbox/.",
+ '#rig_atype':"Prop = objects and machines. Ped = a character that bends with GTA's skeleton.||If you skip it: prop.",
+ '#rig_prevbtn':"Builds a fast 3D preview (no textures) so you can pick parts. Takes ~10–40 s.||Without it you can't rig. Plain Convert still works.",
+ '#rig_canvas':"Drag to orbit · wheel to zoom · click to select parts · shift-drag to box-select.",
+ '#rig_role':"What the selected parts do. Parts with the same job move together as one piece.||Unassigned parts become hull (the main body).",
+ '#rig_bone':"Which GTA bone this stiff part follows, e.g. armour plate → upper arm.||If you skip it: the nearest bone is picked automatically.",
+ 'button[onclick="rigTrashSel()"]':"Leave the selected parts out of the export.||The source file is never changed.",
+ 'button[onclick="rigSelectIsland()"]':"Select every part touching the current selection — grabs whole mechanisms in one click.",
+ '#rig_px':"Pivot (the point it rotates around), in metres. Put it at the joint or axle.||If you skip it: the centre of the selected parts.",
+ '#rig_py':"Pivot (the point it rotates around), in metres. Put it at the joint or axle.||If you skip it: the centre of the selected parts.",
+ '#rig_pz':"Pivot (the point it rotates around), in metres. Put it at the joint or axle.||If you skip it: the centre of the selected parts.",
+ '#rig_rrx':"Rest rotation in degrees, e.g. lay a sideways propeller flat with X = 90.||If you skip it: parts keep the angle they were modelled at.",
+ '#rig_rry':"Rest rotation in degrees, e.g. lay a sideways propeller flat with Y = 90.",
+ '#rig_rrz':"Rest rotation in degrees, e.g. lay a sideways propeller flat with Z = 90.",
+ 'button[data-anim="none"]':"No motion preview.",
+ 'button[data-anim="source_clip"]':"Use the animation that came with the model as the motion source.",
+ 'button[data-anim="tank_aim"]':"Preview turret and barrel aiming.",
+ 'button[data-anim="drone_spin"]':"Preview rotors spinning and thrusters tilting.",
+ 'button[data-anim="ped_walk"]':"Preview the character walking on GTA's skeleton.",
+ 'button[data-anim="ped_squat"]':"Stretch test: crouch the character to spot parts that pull or gap.",
+ '#rig_skel':"Show the GTA skeleton over your model to check that joints line up.||Display only.",
+ '#rig_playbtn':"Play or pause the preview motion.||Preview only; nothing is saved.",
+ '#rig_scrub':"Scrub the preview motion to check that parts move as expected.||Preview only; nothing is saved.",
+ '#rig_in':"Start of the recorded clip (seconds).||If you skip it: the whole clip.",
+ '#rig_out':"End of the recorded clip (seconds).||If you skip it: the whole clip.",
+ '#rig_hz':"Samples per second when recording motion. 30 is smooth.||If you skip it: the default rate.",
+ 'button[onclick="rigUseRest()"]':"Snap to the part's rest pose — how it sits before animating.",
+ '#rig_capmode':"Capture (recording motion into the file): clip slice = a time range; drone flight = auto-generated hover moves.||If you skip it: no motion is recorded.",
+ '#rig_clipname':"Name of the source animation clip to record.",
+ 'button[onclick="rigRefit()"]':"Re-fit the skeleton to the parts you kept after trashing some.",
+ 'button[onclick="rigCompile()"]':"Builds the final GTA files from your choices (1–3 min). RAGE is GTA's engine.||Your rig choices are kept if it fails, so you can fix and retry.",
+ '#rig_parts':"Every piece the preview found, grouped so you can select it.",
+ '#lbox .x':"Close.",
+};
+// "i" buttons appended into section titles, matched by title text
+const HL_TITLE_TIPS={
+ 'find on sketchfab':"Search Sketchfab's library of free downloadable models and convert them straight into game files.",
+ 'convert a model':"Turn a model file into a GTA prop. Pick a file, choose what it is, press convert.",
+ 'what kind of prop?':"Choose how the model should behave in-game. Each option explains itself below.",
+ 'textures':"How texture images are packaged with the prop.",
+ 'conversions':"Every conversion job, newest first. Failures also appear in the problems panel.",
+ 'appearance':"Interface look.",
+ 'interface theme':"Classic neon or the flatter workbench theme.",
+ 'sketchfab auth':"Sign in with your own Sketchfab account so model downloads work.",
+ 'inbox':"Files waiting in the pipeline's inbox folder get converted from here.",
+ 'rig & animation workbench':"Pick which parts of a model move and how, then build it.",
+};
+const hl_tip=document.createElement('div');
+hl_tip.id='hl_tip';hl_tip.setAttribute('role','tooltip');hl_tip.setAttribute('aria-hidden','true');
+document.body.appendChild(hl_tip);
+let hlTimer=null, hlTarget=null, hlDragT=0, hlPointerDown=false;
+function hlOn(){return localStorage.getItem('sig_help')!=='0';}
+function hlSetToggle(){
+ const b=$('hl_toggle');
+ b.textContent=hlOn()?'? help: on':'? help: off';
+ b.setAttribute('aria-pressed',String(hlOn()));
+ document.body.classList.toggle('hl-off',!hlOn());
+}
+$('hl_toggle').addEventListener('click',()=>{
+ localStorage.setItem('sig_help',hlOn()?'0':'1');hlSetToggle();hlHide();
+});
+function hlApply(){
+ for(const k in HL_COPY){
+  document.querySelectorAll(k).forEach(el=>{
+   if(!el.dataset.tip)el.dataset.tip=HL_COPY[k];
+   // hovering a radio/checkbox's label text should also show the tip
+   const lbl=el.closest('label');
+   if(lbl&&!lbl.dataset.tip)lbl.dataset.tip=el.dataset.tip;
+  });
+ }
+ // append "i" help buttons into section titles matched by text
+ document.querySelectorAll('h2,legend,summary').forEach(el=>{
+  if(el.querySelector('.cy-tip-i'))return;
+  const t=el.textContent.trim().toLowerCase().replace(/\s+/g,' ');
+  for(const k in HL_TITLE_TIPS){
+   if(t.startsWith(k)){
+    const b=document.createElement('button');
+    b.type='button';b.className='cy-tip-i';b.textContent='i';
+    b.dataset.tip=HL_TITLE_TIPS[k];
+    b.setAttribute('aria-label','Help: '+k);
+    el.appendChild(b);return;
+   }
+  }
+ });
+}
+function hlShow(el){
+ const tip=el.closest('[data-tip]');if(!tip)return;
+ if(!hlOn()&&!tip.classList.contains('cy-tip-i'))return;
+ const r=tip.getBoundingClientRect();
+ if((r.width===0&&r.height===0)||tip.closest('[hidden]'))return;
+ if(hlPointerDown||Date.now()-hlDragT<300)return;
+ hlTarget=tip;
+ const parts=tip.dataset.tip.split('||');
+ hl_tip.textContent='';
+ hl_tip.appendChild(document.createTextNode(parts[0]));
+ if(parts[1]){const k=document.createElement('span');k.className='k';k.textContent=parts[1];hl_tip.appendChild(k);}
+ hl_tip.classList.add('show');hl_tip.setAttribute('aria-hidden','false');
+ tip.setAttribute('aria-describedby','hl_tip');
+ const tr=hl_tip.getBoundingClientRect();
+ let x=r.left+r.width/2-tr.width/2;
+ x=Math.max(8,Math.min(x,innerWidth-tr.width-8));
+ let y=r.top-tr.height-8;
+ if(y<8)y=r.bottom+8;
+ hl_tip.style.left=x+'px';hl_tip.style.top=y+'px';
+}
+function hlHide(){
+ if(hlTarget)hlTarget.removeAttribute('aria-describedby');
+ hlTarget=null;hl_tip.classList.remove('show');hl_tip.setAttribute('aria-hidden','true');
+}
+document.addEventListener('pointerover',e=>{
+ const el=e.target.closest('[data-tip]');
+ if(!el)return;
+ if(e.pointerType==='touch')return;
+ clearTimeout(hlTimer);
+ hlTimer=setTimeout(()=>hlShow(el),250);
+});
+document.addEventListener('pointerout',e=>{
+ if(!e.target.closest('[data-tip]'))return;
+ clearTimeout(hlTimer);hlHide();
+});
+document.addEventListener('pointerdown',e=>{
+ hlPointerDown=true;
+ if(e.pointerType==='touch'){
+  const el=e.target.closest('.cy-tip-i');
+  if(el){e.preventDefault();hlShow(el);}
+  else hlHide();
+ }else hlHide();
+});
+document.addEventListener('pointerup',()=>{hlPointerDown=false;});
+document.addEventListener('focusin',e=>{
+ const el=e.target.closest('[data-tip]');if(el)hlShow(el);
+});
+document.addEventListener('focusout',hlHide);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')hlHide();});
+addEventListener('scroll',hlHide,true);
+addEventListener('resize',hlHide);
+// suppress tips while dragging on the rig canvas
+const rc=$('rig_canvas');
+if(rc){
+ rc.addEventListener('pointerdown',()=>{hlPointerDown=true;hlHide();});
+ rc.addEventListener('pointerup',()=>{hlPointerDown=false;hlDragT=Date.now();});
+}
+hlSetToggle();hlApply();
 setInterval(refresh,3000);refresh();
 </script></body></html>
 """
@@ -4152,6 +4863,191 @@ def launch_sf_job(label, model_uid, archive_url, override, dest_name):
     return job["id"]
 
 
+# ── external assist (opt-in, per-job, GUIDED_UX_SPEC §10 / plan Q1-b) ──
+XA_LOG = os.path.join(BUILD, "xa_log.json")
+XA_DIR = os.path.join(WORK_DIR, "xa")
+XA_FAIL_CODES = ("ERR_WORKER_FAILED", "ERR_EXPORT_ARTIFACT_MISSING",
+                 "ERR_GATE1", "ERR_GATE2_YTYP_INVALID")
+
+
+def xa_config():
+    """External-converter service config. setup.json wins, then
+    build/xa_config.json (gitignored), then the gtax.dev default."""
+    cfg = {"service": "gtax.dev glb-to-ydr",
+           "url": "https://public-glb-to-ydr.gtax.dev",
+           "api_key": os.environ.get("GTAX_API_KEY", "")}
+    for path in (os.path.join(ROOT, "setup.json"),
+                 os.path.join(BUILD, "xa_config.json")):
+        try:
+            d = json.load(open(path, encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        xa = d.get("external_assist") if isinstance(d, dict) else None
+        if isinstance(xa, dict):
+            cfg.update({k: v for k, v in xa.items() if v})
+        elif isinstance(d, dict) and d.get("xa_url"):
+            cfg["url"] = d["xa_url"]
+    return cfg
+
+
+def xa_log_read():
+    try:
+        return json.load(open(XA_LOG, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def xa_log_write(entry):
+    log = xa_log_read()
+    log.append(entry)
+    os.makedirs(BUILD, exist_ok=True)
+    with open(XA_LOG, "w", encoding="utf-8") as fh:
+        json.dump(log[-50:], fh, indent=2)
+
+
+def _rsc7_ok(path):
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return False
+    return len(head) >= 4 and head[:4] == b"RSC\x07"
+
+
+def _multipart(fields, filefield, filepath):
+    boundary = "----sfp" + secrets.token_hex(12)
+    body = b""
+    for k, v in fields.items():
+        body += ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                 % (boundary, k, v)).encode()
+    fname = os.path.basename(filepath)
+    head = ("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
+            "Content-Type: model/gltf-binary\r\n\r\n" % (boundary, filefield, fname)).encode()
+    with open(filepath, "rb") as fh:
+        data = fh.read()
+    body += head + data + ("\r\n--%s--\r\n" % boundary).encode()
+    return body, "multipart/form-data; boundary=" + boundary
+
+
+def xa_convert(file_name):
+    """Upload the source file to the configured converter, download the
+    result archive, gate-check it, and publish with external_assist
+    provenance. Returns (name, None) or (None, error)."""
+    import zipfile
+    cfg = xa_config()
+    src = _resolve_source(file_name, None)
+    if src is None:
+        for qroot, _dn, fs in os.walk(QUAR):
+            for f in fs:
+                if f == file_name and os.path.basename(qroot) == "raw":
+                    src = os.path.join(qroot, f)
+    if src is None or not os.path.isfile(src):
+        return None, "source file not found"
+    if os.path.splitext(src)[1].lower() not in (".glb", ".gltf"):
+        return None, "the converter only accepts .glb/.gltf"
+    with open(src, "rb") as fh:
+        src_sha = __import__("hashlib").sha256(fh.read()).hexdigest()
+    fields = {"objectName": os.path.splitext(os.path.basename(src))[0],
+              "format": "zip", "textureMode": "ytd"}
+    try:
+        body, ctype = _multipart(fields, "glb", src)
+    except OSError as exc:
+        return None, str(exc)
+    req = urllib.request.Request(cfg["url"].rstrip("/") + "/convert", data=body,
+                                 headers={"Content-Type": ctype}, method="POST")
+    if cfg.get("api_key"):
+        req.add_header("Authorization", "Bearer " + cfg["api_key"])
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            status = resp.status
+            payload = resp.read()
+            quota = resp.headers.get("X-RateLimit-Remaining") or \
+                resp.headers.get("RateLimit-Remaining")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()[:300].decode("utf-8", "replace")
+        return None, f"converter {exc.code}: {detail}"
+    except Exception as exc:
+        return None, str(exc)
+    if status == 201:
+        try:
+            meta = json.loads(payload)
+            with urllib.request.urlopen(meta["url"], timeout=300) as dl:
+                payload = dl.read()
+        except Exception as exc:
+            return None, f"CDN download failed: {exc}"
+    os.makedirs(XA_DIR, exist_ok=True)
+    zpath = os.path.join(XA_DIR, "result_" + secrets.token_hex(4) + ".zip")
+    with open(zpath, "wb") as fh:
+        fh.write(payload)
+    try:
+        zf = zipfile.ZipFile(zpath)
+        zf.extractall(os.path.join(XA_DIR, "out"))
+    except (zipfile.BadZipFile, OSError) as exc:
+        return None, f"bad archive: {exc}"
+    outdir = os.path.join(XA_DIR, "out")
+    natives = []
+    for dp, _dn, fs in os.walk(outdir):
+        for f in fs:
+            if os.path.splitext(f)[1].lower() in (".ydr", ".ytd", ".ytyp"):
+                natives.append(os.path.join(dp, f))
+    # gate-lite: every native must exist, meet the size floor, carry RSC7
+    floors = {".ydr": 1024, ".ytd": 1024, ".ytyp": 64}
+    for p in natives:
+        ext = os.path.splitext(p)[1].lower()
+        if os.path.getsize(p) <= floors.get(ext, 1) or not _rsc7_ok(p):
+            return None, "returned file failed integrity check: " + os.path.basename(p)
+    name = "sf_" + re.sub(r"[^a-z0-9_]", "_",
+                          os.path.splitext(os.path.basename(src))[0].lower())
+    ytyp = next((os.path.basename(p) for p in natives if p.endswith(".ytyp")), None)
+    if ytyp is None or not natives:
+        return None, "archive contained no drawable"
+    # gate4-lite: name collision with an already-published different source
+    try:
+        reg = json.load(open(REGISTRY, encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        reg = {}
+    if name in reg and reg[name].get("source_sha256") != src_sha:
+        return None, "name collision with an existing resource"
+    res_dir = os.path.join(OUT_RES, name)
+    sdir = os.path.join(res_dir, "stream")
+    if os.path.isdir(res_dir):
+        shutil.rmtree(res_dir)
+    os.makedirs(sdir, exist_ok=True)
+    returned_sha = []
+    for p in natives:
+        dst = os.path.join(sdir, os.path.basename(p))
+        shutil.copy2(p, dst)
+        with open(p, "rb") as fh:
+            returned_sha.append(__import__("hashlib").sha256(fh.read()).hexdigest())
+    manifest = ("fx_version 'cerulean'\ngame 'gta5'\n\n"
+                "description 'Externally converted prop (opt-in): %s'\n\n"
+                "data_file 'DLC_ITYP_REQUEST' 'stream/%s'\n" % (name, ytyp))
+    with open(os.path.join(res_dir, "fxmanifest.lua"), "w") as fh:
+        fh.write(manifest)
+    prov = {"external_assist": {
+        "service": cfg["service"], "mode": "api",
+        "consented_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "source_sha256": src_sha, "returned_sha256": returned_sha}}
+    report = {"asset_name": name, "source_file": os.path.basename(src),
+              "resource_name": name, "asset_type": "prop",
+              "runtime_validation": "NOT_PERFORMED", "provenance": prov,
+              "built_at": datetime.datetime.now().isoformat(timespec="seconds")}
+    with open(os.path.join(res_dir, "build_report.json"), "w") as fh:
+        json.dump(report, fh, indent=2)
+    reg[name] = {"source_sha256": src_sha, "source_file": os.path.basename(src),
+                 "resource_dir": res_dir, "resources": [res_dir],
+                 "asset_type": "prop", "target_generation": "legacy",
+                 "runtime_validation": "NOT_PERFORMED",
+                 "provenance": prov,
+                 "built_at": report["built_at"]}
+    with open(REGISTRY, "w", encoding="utf-8") as fh:
+        json.dump(reg, fh, indent=2)
+    xa_log_write({"ts": report["built_at"], "file": os.path.basename(src),
+                  "sha256": src_sha, "service": cfg["service"],
+                  "status": "imported", "result": name})
+    return name, quota
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -4207,6 +5103,14 @@ class Handler(BaseHTTPRequestHandler):
                                "method": scheme,
                                "username": oa.get("username", ""),
                                "has_client_id": bool(oa.get("client_id"))}})
+        elif u.path == "/api/xa/status":
+            log = xa_log_read()
+            cfg = xa_config()
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            used = sum(1 for e in log if str(e.get("ts", "")).startswith(today))
+            self._json({"service": cfg["service"], "url": cfg["url"],
+                        "has_key": bool(cfg.get("api_key")),
+                        "used_today": used, "log": log[-10:]})
         elif u.path == "/api/sf/oauth/start":
             oa = sf_load_oauth()
             cid = oa.get("client_id", "")
@@ -4356,6 +5260,18 @@ class Handler(BaseHTTPRequestHandler):
             jid = launch_job(os.path.basename(p),
                              [sys.executable, ORCH, "--file", p])
             return self._json({"job": jid})
+
+        if u.path == "/api/xa/convert":
+            try:
+                req = json.loads(body or b"{}")
+            except json.JSONDecodeError:
+                return self._json({"error": "bad json"}, 400)
+            if req.get("consent") is not True:
+                return self._json({"error": "explicit per-job consent required"}, 403)
+            name, err = xa_convert(str(req.get("file") or ""))
+            if err:
+                return self._json({"error": err}, 502)
+            return self._json({"ok": True, "name": name})
 
         if u.path == "/api/sweep":
             files = scan_inbox()

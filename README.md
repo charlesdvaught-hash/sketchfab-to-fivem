@@ -2,35 +2,13 @@
 
 Headless converter: a `.glb`/`.gltf`/`.fbx`/`.obj` (or `.zip` containing one)
 goes in, a ready-to-`ensure` FiveM resource comes out — or the job lands in
-`quarantine/` with a machine-readable reason. Everything runs locally with
-**zero Python dependencies** (stdlib only) and **zero network calls** — no
-hosted converter is ever contacted.
+`quarantine/` with a machine-readable reason. Built for the CliffordWon server;
+everything runs locally with **zero Python dependencies** (stdlib only) and
+**zero network calls** — no hosted converter is ever contacted.
 
-The contract of record is `PIPELINE_SPEC.json` (v1.1.0) — treat this README
-as the living map and the spec as the normative rules. `MOTION_SPEC.md`
-covers the motion modes.
-
-## Quickstart
-
-```bat
-:: 1. install Blender 5.2 + the Sollumz 2.9.0 add-on, drop texconv.exe into bin\
-::    (full details, incl. the ped donor skeleton: SETUP.md)
-:: 2. convert any model
-python orchestrator.py --file C:\path\to\model.glb
-:: 3. or drive it all from the browser
-python dashboard.py            :: http://127.0.0.1:8420
-```
-
-Outputs land in `build/resources/[sketchfab_props]/sf_<name>/` as a complete
-FXServer resource (`fxmanifest.lua`, `stream/*.ydr(+ .ytyp)`, spawn snippet,
-`build_report.json` with toolchain + provenance). Failures never publish half
-artifacts — they quarantine with an `ERR_*` reason.
-
-**Legal note:** the pipeline converts only assets your account can legally
-download (official Sketchfab API, no scraping) and records each source's
-license/attribution in every build report. Ped conversion additionally needs
-a donor ped skeleton exported from *your own* GTA V install — game assets are
-never shipped here; see `SETUP.md` §3.
+The contract of record is `PIPELINE_SPEC.json` (v1.1.0). `REVIEW_BUNDLE.md` is
+a frozen point-in-time review snapshot — treat this README as the living map
+and the spec as the normative rules. `MOTION_SPEC.md` covers the motion modes.
 
 ## What you need installed
 
@@ -38,7 +16,7 @@ never shipped here; see `SETUP.md` §3.
 |---|---|---|
 | Blender 5.2.1 | auto-discovered under `C:\Program Files\Blender Foundation\Blender *\blender.exe`, else `PATH`, else `SFP_BLENDER_EXE` | Always `--background --factory-startup --python-exit-code 1`; GUI never opens |
 | Sollumz 2.9.0 | Blender add-on dir | Probed into `build/toolchain_caps.json` on first orchestrator run (cached; delete to re-probe). Bundled deps verified: szio 1.3.0.dev9, pymateria 0.2.0 |
-| texconv.exe | download into `bin/` (DirectXTex releases — see SETUP.md §2) or `SFP_TEXCONV` | PNG → power-of-two DDS (BC1/BC3/BC7) with mipmaps; sha256 recorded in reports |
+| texconv.exe | shipped at `bin/texconv.exe` | PNG → power-of-two DDS (BC1/BC3/BC7) with mipmaps; sha256 recorded in reports |
 | Python 3.12 | PATH | stdlib only for orchestrator/dashboard/harness |
 
 ## File map — what each thing is, when to read it
@@ -56,7 +34,8 @@ never shipped here; see `SETUP.md` §3.
 | `PIPELINE_SPEC.json` | Normative contract v1.1.0: EC_01–EC_10, gates, sidecar schema, error/warning codes | The rules live here |
 | `MOTION_SPEC.md` | Motion-mode contracts (snapshot, multi-part, quarantined vehicle modes, conventions) | Motion work |
 | `reference/RIG_WORKBENCH.md` | Rig & Animation Workbench contract: `preview_scene.json` / `rig_recipe.json` schemas, capture modes (`clip_slice`, `drone_reactive_flight`), multi-instance naming (`<asset>_<role>_<idx>`) | Rig workbench + recipe changes |
-| `bin/texconv.exe` | DDS converter — user-downloaded (not shipped) | DirectXTex release build; see SETUP.md §2 |
+| `REVIEW_BUNDLE.md` | Frozen review snapshot | Historical; don't edit |
+| `bin/texconv.exe` | Vendored DDS converter | Replace only with same-CLI builds |
 
 ## Data flow — one job, start to finish
 
@@ -217,14 +196,33 @@ build/resources/[sketchfab_props]/<name>/
 `runtime_validation` is always `"NOT_PERFORMED"` unless a real FXServer
 staging run happened — Blender-side gates prove format, not gameplay.
 
-## External converters — excluded by policy
+## External converters — opt-in assist only
 
-`gtax-dev/gtav-glb-to-ydr` and `gtax-dev/v-drawable-to-glb` are hosted API
-clients, not local engines. They are **not** dependencies, fallbacks, or test
-infrastructure: no automated job may contact gtax.dev, upload assets, or treat
-their output as a validation oracle. Manual human comparison/diagnostic use is
-allowed and is outside the pipeline. Local failure → quarantine, never a
-silent switch.
+The pipeline is **local-only by default**: every automated job runs Blender +
+Sollumz + texconv on this machine, and a failed local conversion quarantines
+normally — never a silent switch.
+
+One narrow opt-in exception exists: after a *static prop* fails locally, the
+dashboard's failure card offers "Try an outside converter" (default: the
+gtax.dev glb→ydr service). It activates only when **all** of these hold:
+
+- the Settings → "outside help" master switch is on (default **off**);
+- the failed asset is a static prop with an eligible error
+  (`ERR_WORKER_FAILED`, `ERR_EXPORT_ARTIFACT_MISSING`, `ERR_GATE1_*`,
+  `ERR_GATE2_YTYP_INVALID`);
+- the local "fix it" guidance has already been shown;
+- you tick the per-job consent checkbox (never remembered) and click send.
+
+Exactly what leaves the machine is stated on the card: the source `.glb`,
+its size, and its licence. The API key (if any) lives server-side in
+`setup.json`/`build/xa_config.json`/`GTAX_API_KEY` — never in the browser.
+Returned files are integrity-checked (RSC7 magic + size floors) and
+name-collision-checked before publish, carry
+`provenance.external_assist` + `runtime_validation: NOT_PERFORMED` in
+`build_report.json`, and get an `EXTERNAL TOOL` badge in the library. They
+are never treated as validation of the local build.
+
+`gtax-dev/v-drawable-to-glb` remains diagnostic-only manual use.
 
 ## Deploying an asset into the server (last mile is manual)
 
@@ -257,20 +255,3 @@ recorded at build time).
 - Apparel filenames use `fullDlc^component` — that's FiveM's documented
   subdir-mapping convention, not an archetype name (the `sf_` rule doesn't apply).
 - Jobs are serial; Blender is a subprocess, not a service.
-
-## License
-
-**GNU AGPL-3.0-only** (`LICENSE`). Two reasons:
-
-- `blender_worker.py` and `preview_bake.py` tightly integrate with GPL-3.0
-  code — Blender's `bpy` API and the Sollumz add-on — so a GPL-family
-  license is required for distribution regardless.
-- The Affero network clause means anyone offering this pipeline as a
-  hosted conversion service must publish their source — consistent with
-  the project policy that production conversion stays local and auditable.
-
-Third-party components keep their own licenses — see
-`THIRD_PARTY_NOTICES.md` (vendored MIT CSS kits; texconv, Blender, Sollumz,
-and CodeWalker are user-installed, not shipped). Converted output
-resources carry the *source asset's* license, recorded per-job in
-`build_report.json`.

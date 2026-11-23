@@ -1,9 +1,10 @@
 # sketchfab_pipeline — agent map
 
-Headless Sketchfab → FiveM asset converter. **Zero
+Headless Sketchfab → FiveM prop converter for the CliffordWon server. **Zero
 Python dependencies (stdlib only), zero network calls** except the optional
 Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.1.0). Motion modes:
-`MOTION_SPEC.md`. `README.md` is the living file map.
+`MOTION_SPEC.md`. `README.md` is the living file map; `REVIEW_BUNDLE.md` is a
+frozen snapshot — don't edit it.
 
 ## File map
 
@@ -17,11 +18,8 @@ Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.1.0). Motion modes:
 | `autorig_check.py` | host | Auto-rig donor-wrap verification |
 | `dashboard.py` | host | Web UI on `:8420` — see UI section below |
 | `test_harness.py` | host | E2E regression suite — run after worker/orchestrator changes |
-| `bin/texconv.exe` | — | PNG→DDS converter — user-downloaded (SETUP.md §2), never shipped |
+| `bin/texconv.exe` | — | Vendored PNG→DDS converter |
 | `vendor/` | — | Vendored CSS kits (see UI section) |
-| `SETUP.md` | — | Prerequisites: Blender/Sollumz/texconv/donor ped skeleton |
-| `LICENSE` / `THIRD_PARTY_NOTICES.md` | — | AGPL-3.0-only (bpy+Sollumz GPL linkage) + dependency licenses |
-| `donor/donor.example.json` | — | Template → copy to `donor/donor.json` (gitignored) for ped work |
 
 Directories: `inbox/` (drop files), `work/` (per-job scratch, deleted on publish),
 `quarantine/<job>/` (failures + `failure_report.json`), `donor/` (rig donors),

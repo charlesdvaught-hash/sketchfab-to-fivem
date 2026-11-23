@@ -10,21 +10,18 @@ work/
 quarantine/
 
 # Drop zone for source assets (downloaded models live here, never commit)
-inbox/*
-!inbox/.gitkeep
+inbox/
 
 # Generated FXServer test env (junctioned resources + local config)
 testserver/
 
-# Pinned binaries (texconv etc.) — download per SETUP.md, not committed
-bin/*
-!bin/.gitkeep
+# Pinned binaries (texconv etc.) — download per README, not committed
+bin/
 
 # Auto-rig donor assets — game-IP derived, referenced in place, never committed
 # (donor.json holds the user's private donor path; only the template ships)
 donor/*
 !donor/donor.example.json
-!donor/.gitkeep
 
 # Per-user setup config (GTA V dir, CodeWalker dir, donor path)
 setup.json

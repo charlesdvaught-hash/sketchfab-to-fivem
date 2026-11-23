@@ -337,6 +337,7 @@ def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
                 (math.radians(sgn * angle_deg), 0.0, 0.0)).to_quaternion()
             bpy.context.view_layer.update()
             delta = armw @ pb.matrix @ pb.bone.matrix_local.inverted() @ armw_inv
+            posed_bvhs = {}
             for i in moved:
                 # sample the island's verts moved by the bone delta; an
                 # AABB-vs-AABB test flags empty-corner overlaps, so require
@@ -348,12 +349,30 @@ def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
                 for j in range(len(islands)):
                     if j in moved or rest_touch[i][j]:
                         continue
-                    if _overlap_depth(box_i, rest_boxes[j]) > 0.02 and \
-                            _verts_enclosed(moved_pts, islands[j],
-                                            rest_boxes[j]) >= 3:
+                    if _overlap_depth(box_i, rest_boxes[j]) <= 0.02:
+                        continue
+                    if _verts_enclosed(moved_pts, islands[j],
+                                       rest_boxes[j]) >= 3:
                         anomalies.append(
                             f"FK_PENETRATION: bone {bn} {sgn*angle_deg:+.0f}deg "
                             f"moves island {islands[i]['id']} ({islands[i]['bone']}) "
+                            f"through island {islands[j]['id']} "
+                            f"({islands[j]['bone']})")
+                    # FK_SCISSOR_CLIP (F-02): flat/open sheets can pass
+                    # through each other without enclosing a single vert.
+                    # BVHTree.overlap returns real tri-tri intersections;
+                    # parallel/edge-touching faces do not flag.
+                    bvh_j = _island_bvh(islands[j])
+                    if bvh_j is None or not islands[i].get("polys"):
+                        continue
+                    if i not in posed_bvhs:
+                        posed_bvhs[i] = BVHTree.FromPolygons(
+                            [delta @ p for p in islands[i]["pts"]],
+                            islands[i]["polys"])
+                    if posed_bvhs[i].overlap(bvh_j):
+                        anomalies.append(
+                            f"FK_SCISSOR_CLIP: bone {bn} {sgn*angle_deg:+.0f}deg "
+                            f"crosses island {islands[i]['id']} ({islands[i]['bone']}) "
                             f"through island {islands[j]['id']} "
                             f"({islands[j]['bone']})")
             pb.rotation_quaternion = Euler((0, 0, 0)).to_quaternion()

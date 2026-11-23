@@ -171,14 +171,25 @@ ref_name = forced_order[0] if forced_order else \
     (body_names[0] if body_names else None)
 ref_obj = (bpy.context.scene.objects.get(ref_name)
            if ref_name else None)
-ref0_mw = ref_obj.matrix_world.copy() if ref_obj is not None else None
+
+
+def _rigid_se3(M):
+    """Strip scale/shear: carrier relativization must be strictly
+    Euclidean or animated root squash injects phantom shear (F-04)."""
+    return Matrix.LocRotScale(M.to_translation(),
+                              M.to_quaternion().normalized(),
+                              Vector((1.0, 1.0, 1.0)))
+
+
+ref0_mw = (_rigid_se3(ref_obj.matrix_world.copy())
+           if ref_obj is not None else None)
 
 
 def carrier_rel(dg_now):
     """C_k: maps world-at-frame-k into the carrier's f_start frame."""
     if ref_obj is None:
         return Matrix.Identity(4)
-    refk = ref_obj.evaluated_get(dg_now).matrix_world
+    refk = _rigid_se3(ref_obj.evaluated_get(dg_now).matrix_world)
     return ref0_mw @ refk.inverted()
 
 
@@ -279,11 +290,15 @@ for part in man.get("parts", []):
 print("\n=== PASS 3b: MAX-VERTEX MANIFEST RECONSTRUCTION AT f_start ===")
 import numpy as np
 src_at_start = {}
+member_start_verts = {}
 for part in man.get("parts", []):
     model = part["model"]
     cverts = read_ydr_xml_verts(model)
     members = part.get("source_objects") or []
     true = normalize_src(eval_world_verts(members, dg))
+    if len(members) > 1:
+        member_start_verts[model] = {
+            m: normalize_src(eval_world_verts([m], dg)) for m in members}
     if not cverts or not true:
         continue
     off = Vector(part.get("attach_offset", (0, 0, 0)))
@@ -312,8 +327,18 @@ for part in man.get("parts", []):
 # a fixed 4-point sweep so inter-stop interpolation error can't hide.
 # Falls back to the single t=0.5 probe for legacy 2-pose manifests.
 def predict_pose(part, t):
-    """Manifest-space (off, R) at normalized t — piecewise keyframe
-    lerp+slerp when 'keyframes' exist, else 2-pose hemisphere slerp."""
+    """Manifest-space (off, R, repose, S) at normalized t — piecewise
+    keyframe lerp+slerp when 'keyframes' exist, else 2-pose hemisphere
+    slerp. repose/S are only non-None on rest_rot parts: the emitted basis
+    is q_pred = S @ ramp(s) with ramp=slerp(D4_inv,I,s), so the net re-pose
+    baked into predicted verts vs raw source is repose = ramp @ D4 =
+    slerp(I, D4, s). Truth-side comparison must apply the SAME re-pose:
+    conjugate truth about off_p by S @ repose @ S^-1 (exact -- the
+    right-side q_pred strip leaves a commutator term)."""
+    q_D4 = None
+    if part.get("rest_rot_deg"):
+        q_D4 = Euler([math.radians(x) for x in part["rest_rot_deg"]],
+                     'XYZ').to_quaternion()
     kfs = part.get("keyframes")
     if kfs:
         tks = [float(k["t"]) for k in kfs]
@@ -327,8 +352,17 @@ def predict_pose(part, t):
                   len(tks) - 1)
         lo = max(0, hi - 1)
         a = 0.0 if tks[hi] <= tks[lo] else (t - tks[lo]) / (tks[hi] - tks[lo])
+        q_p = qs[lo].slerp(qs[hi], a)
+        repose = S = None
+        if q_D4 is not None:
+            svals = [float(k.get("repose", k["t"])) for k in kfs]
+            s_t = svals[lo] + (svals[hi] - svals[lo]) * a
+            q_ident = Euler((0.0, 0.0, 0.0)).to_quaternion()
+            repose = q_ident.slerp(q_D4, s_t)          # slerp(I,D4,s)
+            ramp = q_D4.inverted().slerp(q_ident, s_t)  # slerp(D4_inv,I,s)
+            S = (q_p @ ramp.inverted()).to_matrix()
         return (ps[lo] + (ps[hi] - ps[lo]) * a,
-                qs[lo].slerp(qs[hi], a).to_matrix())
+                q_p.to_matrix(), repose, S)
     off0 = Vector(part.get("attach_offset", (0, 0, 0)))
     off1 = Vector(part.get("deployed_offset", off0) or off0)
     r0 = part.get("folded_rot") or part.get("initial_rot") or [0, 0, 0]
@@ -336,7 +370,24 @@ def predict_pose(part, t):
         or part.get("initial_rot") or [0, 0, 0]
     q0 = Euler([math.radians(x) for x in r0], 'YXZ').to_quaternion()
     q1 = Euler([math.radians(x) for x in r1], 'YXZ').to_quaternion()
-    return off0 + (off1 - off0) * t, slerp_hemi(q0, q1, t).to_matrix()
+    q_p = slerp_hemi(q0, q1, t)
+    repose = S = None
+    if q_D4 is not None:
+        q_ident = Euler((0.0, 0.0, 0.0)).to_quaternion()
+        repose = q_ident.slerp(q_D4, t)
+        ramp = q_D4.inverted().slerp(q_ident, t)
+        S = (q_p @ ramp.inverted()).to_matrix()
+    return off0 + (off1 - off0) * t, q_p.to_matrix(), repose, S
+
+
+def repose_truth(off_p, repose, S, pts):
+    """Apply the predicted part's net rest_rot re-pose to source-truth
+    verts: rotate them about the pivot by S @ repose @ S^-1."""
+    if repose is None or S is None:
+        return pts
+    q_net = S.to_quaternion() @ repose @ S.to_quaternion().inverted()
+    M = q_net.to_matrix()
+    return [off_p + M @ (p - off_p) for p in pts]
 
 
 f_end = man.get("frame_window", {}).get("end_frame", f_start)
@@ -353,16 +404,39 @@ if f_end > f_start:
             probes = {0.5 * (float(kfs[i]["t"]) + float(kfs[i + 1]["t"]))
                       for i in range(len(kfs) - 1)}
             probes |= {0.125, 0.375, 0.625, 0.875}
+            stop_ts = {float(k["t"]) for k in kfs}
         else:
             probes = {0.5}
+            stop_ts = set()
         frames = sorted({f_start + round(t * span) for t in probes})
         frames = [f for f in frames if f_start < f < f_end]
+        # F-05a: drop probes that landed on a baked stop frame -- a knot
+        # point reports ~0 by construction and would waste the budget.
+        frames = [f for f in frames
+                  if all(abs((f - f_start) / span - st) * span > 0.5
+                         for st in stop_ts)]
         members = part.get("source_objects") or []
         cverts = read_ydr_xml_verts(part["model"])
         if not members or not cverts:
             continue
         c_local = sum(cverts, Vector()) / len(cverts)
         worst = None
+        worst_member = 0.0
+        # per-member canonical centroids: u_m = R_fold^-1 @ (v0 - off_p)
+        # (folded basis reproduces v0 exactly -- PASS3b), so each member's
+        # own predicted centroid is off_p + R_p @ u_m.
+        member_uc = {}
+        if len(members) > 1:
+            r_fr = Euler([math.radians(x) for x in
+                          (part.get("folded_rot")
+                           or part.get("initial_rot") or [0, 0, 0])],
+                         'YXZ').to_matrix().inverted()
+            off0 = Vector(part.get("attach_offset", (0, 0, 0)))
+            for mname in members:
+                v0 = normalize_src(eval_world_verts([mname], dg))
+                if v0:
+                    member_uc[mname] = r_fr @ (
+                        sum(v0, Vector()) / len(v0) - off0)
         for fr in frames:
             t_a = (fr - f_start) / span  # actual t at the integer frame
             bpy.context.scene.frame_set(fr)
@@ -374,13 +448,27 @@ if f_end > f_start:
                                                               dg_f)])
             if not true_f:
                 continue
-            off_p, R_p = predict_pose(part, t_a)
+            off_p, R_p, repose, S = predict_pose(part, t_a)
+            true_f = repose_truth(off_p, repose, S, true_f)
             pred = off_p + R_p @ c_local
             c_true = sum(true_f, Vector()) / len(true_f)
             delta = (pred - c_true).length
             flag = "  <-- EXCEEDS 0.03m" if delta > 0.03 else ""
             print(f"  PROBE {part['model']} t={t_a:.4f} (f{fr}): "
                   f"{delta:.4f}m{flag}")
+            if member_uc:
+                # per-member worst deviation: each member's own predicted
+                # centroid vs its true centroid (repose-adjusted)
+                dm = 0.0
+                for mname, u_m in member_uc.items():
+                    tv = normalize_src(
+                        [Ck @ v for v in eval_world_verts([mname], dg_f)])
+                    if tv:
+                        tv = repose_truth(off_p, repose, S, tv)
+                        pm = off_p + R_p @ u_m
+                        dm = max(dm,
+                                 (pm - sum(tv, Vector()) / len(tv)).length)
+                worst_member = max(worst_member, dm)
             if worst is None or delta > worst[0]:
                 worst = (delta, fr, t_a, c_true, pred)
         if worst is not None:
@@ -399,6 +487,50 @@ if f_end > f_start:
                 print(f"      worst: {delta:.4f}m @ t={t_a:.4f} "
                       f"pred={tuple(round(x,3) for x in pred)} "
                       f"true={tuple(round(x,3) for x in c_true)}")
+                if worst_member > 0.0:
+                    print(f"      worst per-member centroid dev "
+                          f"(interior probes): {worst_member:.4f}m")
                 print(f"      |true_worst - folded|={(c_true-cf).length:.3f}m "
                       f"|true_worst - deployed|={(c_true-ce).length:.3f}m "
                       f"|folded - deployed|={(ce-cf).length:.3f}m")
+
+# --- PASS 3c: DEPLOYED-POSE per-member residual ---
+# PASS3b validates the f_start join (intra-member deviation is 0 there by
+# construction); the deployed end is where non-rigid multi-member chains
+# show their permanent error. Per-member: predicted pose vs that member's
+# own true verts at f_end, with the rest_rot re-pose conjugated onto truth.
+    print("\n=== PASS 3c: DEPLOYED-POSE PER-MEMBER RESIDUAL AT f_end ===")
+    bpy.context.scene.frame_set(f_end)
+    bpy.context.view_layer.update()
+    dg_end = bpy.context.evaluated_depsgraph_get()
+    Ce = carrier_rel(dg_end)
+    for part in man.get("parts", []):
+        members = part.get("source_objects") or []
+        if len(members) < 2:
+            continue
+        dep_off = part.get("deployed_offset")
+        dep_rot = part.get("deployed_rot")
+        if not dep_off or not dep_rot:
+            continue
+        off_p, R_p, repose, S = predict_pose(part, 1.0)
+        r_fr_inv = Euler([math.radians(x) for x in
+                          (part.get("folded_rot")
+                           or part.get("initial_rot") or [0, 0, 0])],
+                         'YXZ').to_matrix().inverted()
+        print(f"  Part {part['model']} ({len(members)} members):")
+        for mname in members:
+            tv = normalize_src(
+                [Ce @ v for v in eval_world_verts([mname], dg_end)])
+            if not tv:
+                continue
+            tv = repose_truth(off_p, repose, S, tv)
+            v0 = member_start_verts.get(part["model"], {}).get(mname)
+            if not v0:
+                continue
+            step = max(1, len(v0) // 400)
+            pred = [off_p + R_p @ (r_fr_inv @ (v - off_p))
+                    for v in v0[::step]]
+            dn = max((pv - tvx).length
+                     for pv, tvx in zip(pred, tv[::step]))
+            print(f"    {mname}: max_vert_dev={dn:.4f}m "
+                  f"(n={len(pred)} vs {len(tv[::step])})")

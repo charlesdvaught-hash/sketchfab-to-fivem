@@ -1384,6 +1384,45 @@ def _slerp_chain(qs):
     return out
 
 
+def _rigid_se3(M):
+    """Strip scale/shear from a matrix: keep translation + normalized
+    rotation only. Carrier relativization ref0 @ refk^-1 must be strictly
+    Euclidean -- a 1% squash keyframe on the root would otherwise inject
+    shear into every child's lever arm (F-04)."""
+    return Matrix.LocRotScale(M.to_translation(),
+                              M.to_quaternion().normalized(),
+                              Vector((1.0, 1.0, 1.0)))
+
+
+def _kabsch_fit(P0, Pk, w):
+    """Weighted normalized Kabsch: rigid delta T' mapping points P0 -> Pk.
+
+    P0, Pk: numpy (m,3) corresponding points (m>=3); w: (m,) weights
+    (normalized internally -- centroids divide by sum(w), not len).
+    Returns a mathutils Matrix (delta in the points' frame) or None when
+    degenerate. det<0 reflection fixed by flipping the last singular
+    direction."""
+    import numpy as np
+    if len(P0) < 3:
+        return None
+    w = w / w.sum()
+    c0 = (w[:, None] * P0).sum(axis=0)
+    ck = (w[:, None] * Pk).sum(axis=0)
+    A = P0 - c0
+    Bk = Pk - ck
+    H = (A * w[:, None]).T @ Bk
+    U, _s, Vt = np.linalg.svd(H)
+    Rm = Vt.T @ U.T
+    if np.linalg.det(Rm) < 0:
+        Vt[-1] = -Vt[-1]
+        Rm = Vt.T @ U.T
+    t = ck - Rm @ c0
+    return Matrix(((Rm[0, 0], Rm[0, 1], Rm[0, 2], t[0]),
+                   (Rm[1, 0], Rm[1, 1], Rm[1, 2], t[1]),
+                   (Rm[2, 0], Rm[2, 1], Rm[2, 2], t[2]),
+                   (0.0, 0.0, 0.0, 1.0)))
+
+
 def rdp_hinge_stops(ts, pos_exact, q_exact, v_c, tol_m, max_stops):
     """Adaptive keyframe stops by max-vertex error between piecewise
     lerp+slerp (current stops) and the exact per-frame pose.
@@ -1448,6 +1487,9 @@ def motion_multi_part(job, mc):
     kf_mode = cfg.get("keyframe_mode", "adaptive")
     kf_tol = float(cfg.get("keyframe_tol_m", 0.02))
     kf_max = int(cfg.get("keyframe_max_stops", 5))
+    group_fit_mode = cfg.get("group_fit", "procrustes")
+    prox_w = float(cfg.get("group_fit_proximal_weight", 3.0))
+    dev_thresh = float(cfg.get("max_intra_part_dev", 0.10))
     spin_min_deg = float(cfg.get("spin_min_deg", 300.0))
     spin_max_travel = float(cfg.get("spin_max_travel_m", 0.05))
     spin_tail_min = float(cfg.get("spin_tail_min_dpf", 0.1))
@@ -1570,7 +1612,8 @@ def motion_multi_part(job, mc):
     D_b_inv = Matrix.Identity(4)
     if body_names:
         ref = forced_order[0] if forced_order else body_names[0]
-        D_b_inv = mw_samples[ref][0] @ mw_samples[ref][-1].inverted()
+        D_b_inv = (_rigid_se3(mw_samples[ref][0])
+                   @ _rigid_se3(mw_samples[ref][-1]).inverted())
         _dq = D_b_inv.to_quaternion()
         if math.degrees(_dq.angle) > 1.0 or \
                 D_b_inv.to_translation().length > 0.01:
@@ -1605,7 +1648,7 @@ def motion_multi_part(job, mc):
                 name_hit = any(p in n.lower() for p in spin_patterns)
                 rel_travel = _trav
                 if not name_hit and body_names:
-                    ref_s = mw_samples[ref]
+                    ref_s = [_rigid_se3(m) for m in mw_samples[ref]]
                     rel0 = mw_samples[n][0].to_translation()
                     rel_travel = max(
                         ((ref_s[0] @ ref_s[k].inverted() @ mw_samples[n][k])
@@ -1716,6 +1759,95 @@ def motion_multi_part(job, mc):
         for gi, rb in bone_drivers.items():
             driver_traj[gi] = trajs[rb]
 
+    # --- F-01 multi-member group analysis (pre-bake: mw_samples and local
+    # mesh data are still valid). For groups with >1 member, probe verts
+    # (centroid + 6 axis-extremes + stride subsample) are fitted per frame
+    # by weighted Kabsch, producing the whole-group rigid DELTA T'_k that
+    # maps the f_start config into carrier-rel frame k. Member deviation
+    # vs T'_k measures non-rigidity (WARN_NONRIGID_CHAIN). Armature-
+    # deformed members can't be fit from object matrices -> driver
+    # fallback. ---
+    group_Tp = {}        # gi -> [Matrix world delta per sample] (fitted)
+    ref_rigid = ([_rigid_se3(m) for m in mw_samples[ref]]
+                 if body_names else None)
+    for gi, g in enumerate(groups):
+        if len(g["members"]) < 2:
+            continue
+        movers = [m for m in g["members"]
+                  if moved[m] or (c0.get(m) is not None
+                                  and c1.get(m) is not None
+                                  and (c0[m] - c1[m]).length > 1e-4)]
+        if not movers:
+            continue
+        arm = any(mod.type == "ARMATURE"
+                  for m in g["members"]
+                  for mod in src_by_name[m].modifiers)
+        drv = driver_of.get(gi)
+        driver_name = (drv[1] if drv and drv[0] == "obj" else movers[0])
+        n_s = len(sample_frames)
+        C = ([ref_rigid[0] @ ref_rigid[k].inverted()
+              for k in range(n_s)] if ref_rigid else
+             [Matrix.Identity(4)] * n_s)
+        probe = []   # (member, weight, [local Vector])
+        for m in g["members"]:
+            o = src_by_name[m]
+            nv = len(o.data.vertices)
+            if arm or not nv:
+                probe.append((m, 1.0, [Vector((0.0, 0.0, 0.0))]))
+                continue
+            cos = [v.co for v in o.data.vertices]
+            pick = set(range(0, nv, max(1, -(-nv // 10))))
+            for a in range(3):
+                pick.add(min(range(nv), key=lambda i, a=a: cos[i][a]))
+                pick.add(max(range(nv), key=lambda i, a=a: cos[i][a]))
+            lv = [cos[i].copy() for i in sorted(pick)]
+            lv.append(sum(lv, Vector()) / len(lv))
+            probe.append((m, prox_w if m == driver_name else 1.0, lv))
+        if arm:
+            warn("WARN_GROUP_FIT_SKIPPED_DEFORMED:" +
+                 str(g["label"] or gi))
+        import numpy as np
+        V0s = {m: [mw_samples[m][0] @ v for _m, _w, lv in probe
+                   if _m == m for v in lv] for m, _w, lv in probe}
+        P0 = np.array([[*v] for _m, _w, lv in probe
+                       for v in V0s[_m]])
+        W = np.array([w_ for _m, w_, lv in probe for _v in lv])
+        Tp, fit_ok = [], not arm
+        for k in range(n_s):
+            Pk = np.array([[*(C[k] @ mw_samples[m][k] @ v)]
+                           for m, _w, lv in probe for v in lv])
+            Tk = _kabsch_fit(P0, Pk, W) if fit_ok else None
+            if Tk is None:
+                fit_ok = False
+                W0m_inv = mw_samples[driver_name][0].inverted()
+                Tp = [C[k2] @ mw_samples[driver_name][k2] @ W0m_inv
+                      for k2 in range(k + 1)]
+                # fill remaining frames with the driver delta
+                Tp += [C[k2] @ mw_samples[driver_name][k2] @ W0m_inv
+                       for k2 in range(k + 1, n_s)]
+                break
+            Tp.append(Tk)
+        if fit_ok and group_fit_mode == "procrustes" and \
+                g["kind"] == "hinge" and gi in driver_traj:
+            group_Tp[gi] = Tp
+        # member deviation vs the group delta T'_k
+        i_dev = e_dev = 0.0
+        for k in range(1, n_s):
+            Tk = Tp[k]
+            for m, _w, lv in probe:
+                wm_k = C[k] @ mw_samples[m][k]
+                d = max((Tk @ v0 - wm_k @ v).length
+                        for v0, v in zip(V0s[m], lv))
+                if k == n_s - 1:
+                    e_dev = max(e_dev, d)
+                else:
+                    i_dev = max(i_dev, d)
+        if max(i_dev, e_dev) > dev_thresh:
+            rec = (" :endpoint_dev>0.02m - permanent deployed error, "
+                   "split members in part_map" if e_dev > 0.02 else "")
+            warn(f"WARN_NONRIGID_CHAIN:{g['label'] or gi}:"
+                 f"interior_dev={i_dev:.4f}m:endpoint_dev={e_dev:.4f}m{rec}")
+
     # --- bake folded-pose world geometry for everything. ---
     baked = {o.name: eval_baked_obj(o) for o in src}
     baked = {n: b for n, b in baked.items()
@@ -1817,16 +1949,41 @@ def motion_multi_part(job, mc):
             hinge, W0, W1 = part_geom[gi]
             basis_q = (R @ W0).to_quaternion()
             W1_rel = D_b_inv @ W1
+            # --- group delta trajectory T'_k: rigid world-space transform
+            # mapping the group's f_start config into carrier-rel frame k.
+            # Driver path: T'_k = C_k @ W_k @ W0^-1 (C_k = ref0@refk^-1).
+            # Fitted multi-member path: pre-bake Kabsch deltas (group_Tp).
+            # Endpoint snap: when the fitted end pose matches the driver
+            # within epsilon the group is rigid -> keep driver values so
+            # rigid-group manifests stay bit-identical. ---
+            n_s = len(sample_frames)
+            Tp = None
+            if gi in driver_traj:
+                Tp = group_Tp.get(gi)
+                if Tp is not None:
+                    dq = (Tp[-1] @ W0).to_quaternion().rotation_difference(
+                        W1_rel.to_quaternion()).angle
+                    dp = (Tp[-1] @ hinge - W1_rel.to_translation()).length
+                    if dp < 1e-4 and dq < 1e-4:
+                        Tp = None
+                if Tp is None and kf_mode != "off":
+                    W0_inv = W0.inverted()
+                    ref_s = (ref_rigid if ref_rigid else
+                             [_rigid_se3(m) for m in mw_samples[ref]])
+                    Tp = [ref_s[0] @ ref_s[k].inverted()
+                          @ driver_traj[gi][k] @ W0_inv
+                          for k in range(n_s)]
+            T_end = Tp[-1] if Tp else (W1_rel @ W0.inverted())
+            dep_hinge_w = T_end @ hinge
             if g.get("pivot_cfg"):
                 # workbench recipe pivot: normalized recipe space -- must get
                 # the same body_off grounding shift the baked verts received;
                 # deployed pivot rides the driver's world travel delta
                 hinge_n = Vector(g["pivot_cfg"]) + body_off
-                dep_n = (hinge_n + N.to_3x3() @
-                         (W1_rel.to_translation() - hinge))
+                dep_n = hinge_n + N.to_3x3() @ (dep_hinge_w - hinge)
             else:
                 hinge_n = N @ hinge + body_off
-                dep_n = N @ W1_rel.to_translation() + body_off
+                dep_n = hinge_n + N.to_3x3() @ (dep_hinge_w - hinge)
             label = g["label"] or f"{asset_name}_part{part_i:02d}"
             entry = {"kind": "hinge",
                      "source_objects": list(g["members"]),
@@ -1835,33 +1992,37 @@ def motion_multi_part(job, mc):
                      "deployed_offset": [round(dep_n.x, 4), round(dep_n.y, 4),
                                          round(dep_n.z, 4)],
                      "folded_rot": fivem_euler(R @ W0 @ D4_inv),
-                     "deployed_rot": fivem_euler(R @ W1_rel)}
+                     "deployed_rot": fivem_euler(R @ (T_end @ W0))}
+            rr_spec = g.get("rest_rot")
+            if rr_spec and any(abs(float(a)) > 1e-6 for a in rr_spec[:3]):
+                entry["rest_rot_deg"] = [round(float(a), 4)
+                                         for a in rr_spec[:3]]
             # --- manifest keyframes (Option c): exact per-sample poses,
-            # adaptive RDP stop selection. W_rel(k) is the driver's world
-            # pose mapped into the body's f_start frame (carrier-relative:
-            # ref0 @ ref_k^-1 @ W_k -- generalizes W1_rel = D_b_inv @ W1).
-            # The emitted basis ramps the rest_rot compensation across t:
-            # R@W_rel @ slerp(D4_inv -> I, t), so t=0 == folded_rot and
-            # t=1 == deployed_rot bit-for-bit and the trajectory is
-            # continuous (a hard D4 drop at t=1 would be an irreducible
-            # step the RDP would waste stops chasing). ---
-            if kf_mode != "off" and gi in driver_traj:
-                traj = driver_traj[gi]
-                ref_s = mw_samples[ref]
-                n_s = len(sample_frames)
+            # adaptive RDP stop selection. The emitted basis ramps the
+            # rest_rot compensation across MOTION PROGRESS s(k) -- pose
+            # distance travelled / total -- so re-posing completes with the
+            # physical deployment instead of twisting through a stationary
+            # tail (linear-in-t would apply only ~50% of rest_rot on a
+            # front-loaded clip). Endpoints land bit-for-bit on
+            # folded_rot/deployed_rot. ---
+            if kf_mode != "off" and gi in driver_traj and Tp:
                 ts = [(f - f_start) / (f_end - f_start)
                       for f in sample_frames]
                 q_d4inv = D4_inv.to_quaternion()
                 q_ident = Euler((0.0, 0.0, 0.0)).to_quaternion()
                 N3 = N.to_3x3()
+                dists = [Tk.to_translation().length
+                         + 0.2 * Tk.to_quaternion().angle for Tk in Tp]
+                d_last = dists[-1]
+                s_k = ([min(1.0, d / d_last) for d in dists]
+                       if d_last > 1e-6 else ts)
                 pos_exact, q_exact = [], []
                 for k in range(n_s):
-                    w_rel = ref_s[0] @ ref_s[k].inverted() @ traj[k]
                     pos_exact.append(
-                        hinge_n + N3 @ (w_rel.to_translation() - hinge))
+                        hinge_n + N3 @ (Tp[k] @ hinge - hinge))
                     q_exact.append(
-                        (R @ w_rel).to_quaternion()
-                        @ q_d4inv.slerp(q_ident, ts[k]))
+                        (R @ (Tp[k] @ W0)).to_quaternion()
+                        @ q_d4inv.slerp(q_ident, s_k[k]))
                 # <=128-vert subsample: <=122 uniform-stride + the 6
                 # axis-extremes (tip rotation error lives at the furthest
                 # vertex)
@@ -1881,13 +2042,18 @@ def motion_multi_part(job, mc):
                 else:
                     stops = rdp_hinge_stops(ts, pos_exact, q_exact, v_c,
                                             kf_tol, kf_max)
+                kf_q = _slerp_chain([q_exact[k] for k in stops])
+                has_rr = "rest_rot_deg" in entry
                 entry["keyframes"] = [
-                    {"t": round(ts[k], 4),
-                     "pos": [round(pos_exact[k].x, 4),
-                             round(pos_exact[k].y, 4),
-                             round(pos_exact[k].z, 4)],
-                     "rot": fivem_euler(q_exact[k].to_matrix())}
-                    for k in stops]
+                    dict({"t": round(ts[k], 4),
+                          "pos": [round(pos_exact[k].x, 4),
+                                  round(pos_exact[k].y, 4),
+                                  round(pos_exact[k].z, 4)],
+                          "rot": fivem_euler(q_exact[k].to_matrix()),
+                          "quat": [round(kf_q[i].w, 6), round(kf_q[i].x, 6),
+                                   round(kf_q[i].y, 6), round(kf_q[i].z, 6)]},
+                         **({"repose": round(s_k[k], 4)} if has_rr else {}))
+                    for i, k in enumerate(stops)]
         # Canonicalise verts into pivot-local orientation: baked verts carry
         # the part's f_start world rotation, and consumers apply the emitted
         # folded/initial rotation as an absolute basis -- without unrotating
@@ -1926,16 +2092,24 @@ def motion_multi_part(job, mc):
                       "cumulative tracks past 180deg.\n"
                       "Usage: attach each part to the body entity at\n"
                       "attach_offset with folded_rot/initial_rot. kind=hinge:\n"
-                      "a 'keyframes' array of {t,pos,rot} stops (t in\n"
+                      "a 'keyframes' array of {t,pos,rot,quat} stops (t in\n"
                       "0..1 over frame_window, pos body-local, rot YXZ_deg\n"
-                      "absolute basis) selected by adaptive RDP to track the\n"
-                      "source trajectory <= keyframe_tol_m; interpolate\n"
+                      "absolute basis, quat [w,x,y,z] sequentially\n"
+                      "hemisphere-chained for direct nlerp) selected by\n"
+                      "adaptive RDP to track the source trajectory\n"
+                      "<= keyframe_tol_m; interpolate\n"
                       "piecewise lerp+slerp between adjacent stops at local\n"
                       "alpha=(t-t_i)/(t_i+1-t_i). No 'keyframes' = fall back\n"
                       "to offset->deployed_offset + rot->deployed_rot over\n"
                       "transition_ms. kind=spin: rotate continuously\n"
                       "about attach_offset on spin_axis at spin_rpm (G2 -\n"
-                      "never a folded/deployed hinge angle).\n"
+                      "never a folded/deployed hinge angle). 'rest_rot_deg'\n"
+                      "is present only on parts with a recipe rest_rot\n"
+                      "override; keyframe basis already includes its\n"
+                      "motion-progress ramp. Multi-member groups use a\n"
+                      "whole-group Kabsch best-fit trajectory; their\n"
+                      "deployed_* is the group best-fit end pose, and\n"
+                      "keyframes[-1] matches it exactly.\n"
                       "runtime_status: manifest only - a runtime consumer is required.",
                       {"mode": "multi_part_prop_assembly",
                        "runtime_status": MANIFEST_RUNTIME_STATUS,

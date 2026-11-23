@@ -63,3 +63,19 @@ Also: `--dump-preview` now activates clips (resolve_clip_playback) so
 workbench pivots match the compile pose; render_check gate is honest
 (`render_check_failed` recorded, never claimed); new advisory gate
 `WARN_PART_PIVOT_OFFSET` fires when a part .ydr bbox centre >0.15 m.
+
+## FULL PASS — all four beta models vs Sketchfab references
+
+- `buster_FINAL_*.png` — folded + deployed both bilaterally symmetric,
+  rings flanking hull, blades inside rings. Part .ydr centres ~0.01 m.
+- `humanoid_FIXED_*.png` — full albedo (red/white atlas + decals) after
+  the UVMap-0 rescue; matches REFERENCE_humanoid.jpg.
+- `police_drone_*.png` vs `REFERENCE_police.jpg` — textured body, POLICE
+  RECON decals, red lens ring, whip antenna all present. Diagnostic
+  material doesn't reproduce the emissive blue lens glow.
+- `mech_PED_iso.png` vs REFERENCE_mech.jpg — silhouette + texture
+  correct (dark olive atlas, white chevrons land on the right plates).
+  rigid_plate_qa flags a cross-lateral thigh cluster in the bone map
+  (binding defect, invisible in a static render).
+- `render_check.py` now also renders .ydd.xml peds and exits nonzero
+  when a resource has nothing to render (no more vacuous passes).

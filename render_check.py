@@ -246,8 +246,10 @@ def render_views(prefix, sun_energy=4.0):
 
 
 def ydr_xmls(res_dir):
+    # .ydd.xml too: ped drawables render through the same importer, and
+    # silently matching nothing makes the check vacuous-pass
     return sorted(f for f in os.listdir(res_dir)
-                  if f.endswith(".ydr.xml"))
+                  if f.endswith((".ydr.xml", ".ydd.xml")))
 
 
 def ydr_path_for(res_dir, model):
@@ -263,6 +265,10 @@ if os.path.isdir(SRC):
     res_dir = SRC
     stream = os.path.join(res_dir, "stream")
     xmls = ydr_xmls(stream) if os.path.isdir(stream) else ydr_xmls(res_dir)
+    if not xmls and not os.path.isfile(
+            os.path.join(res_dir, "assembly_manifest.lua.json")):
+        print("[render_check] FAIL no .ydr/.ydd.xml found in", res_dir)
+        sys.exit(2)
 
     # per-drawable renders
     for xf in xmls:

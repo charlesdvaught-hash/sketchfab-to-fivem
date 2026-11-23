@@ -4326,8 +4326,6 @@ $('wz_ymtack').addEventListener('change',e=>{
  if(e.target.checked)$('convertbtn').disabled=false;
 });
 document.querySelectorAll('#wz_mode .btn').forEach(b=>b.classList.toggle('on',b.dataset.wzmode===WZ.mode));
-wzKindHint();
-if(wzGuided())wzRender();
 /* ── external assist (GUIDED_UX_SPEC §10, plan Q1-b) ────── */
 function xaOn(){return localStorage.getItem('sig_xa')==='1';}
 const xaEl=$('xa_enable');
@@ -4573,6 +4571,7 @@ if(rc){
  rc.addEventListener('pointerup',()=>{hlPointerDown=false;hlDragT=Date.now();});
 }
 hlSetToggle();hlApply();
+wzKindHint();if(wzGuided())wzRender();
 setInterval(refresh,3000);refresh();
 </script></body></html>
 """

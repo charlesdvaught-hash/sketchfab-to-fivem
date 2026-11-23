@@ -26,7 +26,7 @@ import math
 import os
 import sys
 import xml.etree.ElementTree as ET
-from mathutils import Euler, Matrix, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 GLB_PATH = os.path.abspath(argv[0])
@@ -343,8 +343,13 @@ def predict_pose(part, t):
     if kfs:
         tks = [float(k["t"]) for k in kfs]
         ps = [Vector(k["pos"]) for k in kfs]
-        qs = [Euler([math.radians(x) for x in k["rot"]],
-                    'YXZ').to_quaternion() for k in kfs]
+        if all(k.get("quat") for k in kfs):
+            # prefer the emitted chained quat -- euler 'rot' can hop
+            # branches on >180deg swing hinges and corrupt the slerp
+            qs = [Quaternion(k["quat"]) for k in kfs]
+        else:
+            qs = [Euler([math.radians(x) for x in k["rot"]],
+                        'YXZ').to_quaternion() for k in kfs]
         for i in range(1, len(qs)):
             if qs[i - 1].dot(qs[i]) < 0.0:  # sequential hemisphere chain
                 qs[i].negate()

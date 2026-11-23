@@ -211,9 +211,15 @@ def audit_rigid_plate_map(mesh_obj, arm_obj, islands=None, pad_m=0.025):
                    ia["maxs"][k] + pad_m >= ib["mins"][k] for k in range(3)):
                 hops = bone_hop_distance(arm_obj, ia["bone"], ib["bone"])
                 if hops > 1:
+                    close, dmin = _islands_close(ia, ib, pad_m)
+                    if not close:
+                        continue
+                    dstr = (f" (min surf dist {dmin:.3f}m)"
+                            if dmin is not None else "")
                     anomalies.append(
                         f"DISJOINT_KINEMATIC_SEAM: Touching islands {ia['id']} ({ia['bone']}) "
-                        f"and {ib['id']} ({ib['bone']}) are {hops} bone-hops apart (expected <=1)")
+                        f"and {ib['id']} ({ib['bone']}) are {hops} bone-hops apart (expected <=1)"
+                        + dstr)
     return islands, anomalies
 
 
@@ -290,6 +296,30 @@ def _verts_enclosed(pts, isl, box):
         if _vert_enclosed(bvh, p):
             n += 1
     return n
+
+
+def _islands_close(ia, ib, thresh):
+    """BVH nearest-distance touch test: True if >=2 sampled verts of ia
+    lie within thresh of island ib's faces. AABB pad alone over-reports
+    for thin angled plates -- surfaces can be cm apart inside padded
+    boxes. Returns (close: bool, min_dist: float|None)."""
+    bvh_b = _island_bvh(ib)
+    if bvh_b is None:
+        return True, None
+    pts = ia["pts"]
+    step = max(1, len(pts) // 32)
+    hits = 0
+    best = None
+    for p in pts[::step]:
+        r = bvh_b.find_nearest(p)
+        if r is None:
+            continue
+        d = r[3]
+        if best is None or d < best:
+            best = d
+        if d <= thresh:
+            hits += 1
+    return hits >= 2, best
 
 
 def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
@@ -369,12 +399,13 @@ def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
                         posed_bvhs[i] = BVHTree.FromPolygons(
                             [delta @ p for p in islands[i]["pts"]],
                             islands[i]["polys"])
-                    if posed_bvhs[i].overlap(bvh_j):
+                    pairs = posed_bvhs[i].overlap(bvh_j)
+                    if pairs:
                         anomalies.append(
                             f"FK_SCISSOR_CLIP: bone {bn} {sgn*angle_deg:+.0f}deg "
                             f"crosses island {islands[i]['id']} ({islands[i]['bone']}) "
                             f"through island {islands[j]['id']} "
-                            f"({islands[j]['bone']})")
+                            f"({islands[j]['bone']}) pairs={len(pairs)}")
             pb.rotation_quaternion = Euler((0, 0, 0)).to_quaternion()
     bpy.context.view_layer.update()
     return anomalies

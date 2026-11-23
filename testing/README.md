@@ -145,3 +145,15 @@ Round 3 of external review (Argon). Fixes + measured results are in
   `rest_rot` verified phantom-free (repose completes at deployment).
 - **Rigid-SE3 carrier** (`_rigid_se3`) everywhere carrier relativization
   happens + chained `quat` field for runtime nlerp.
+
+## Phase 6 — leg splits + QA upgrades (`PHASE6_SPLITS.md` + `.json`)
+
+- **R-01 closed**: leg chains fully per-member in `part_map`
+  (`leg_{l,r,f}0..7`, 36 parts total, `keyframe_max_stops=50`).
+  PASS4 worst **0.0214 m, 0 EXCEEDS**; PASS3c vacuous for legs.
+  Distal whip links are keyframe-starvation limited — needed 50 stops.
+- **R-02**: `FK_SCISSOR_CLIP` reports `pairs=N` tri-tri counts for
+  severity ranking (41 mech clips; foot-vs-foot = suspicious class).
+- **R-05**: `_islands_close` BVH nearest-distance gate cut
+  `DISJOINT_KINEMATIC_SEAM` **121 → 2** (both genuine ~5 mm proximities).
+- PASS4 prefers emitted `quat` over euler reconstruction.

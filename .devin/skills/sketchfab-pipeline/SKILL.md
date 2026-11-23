@@ -110,7 +110,11 @@ docs elsewhere describe other versions.
    bidirectional ray enclosure** on welded island faces — open C-shells
    can't false-positive; 54→0 on the mech) **plus `FK_SCISSOR_CLIP`**
    (`BVHTree.overlap` tri-tri pairs on posed islands — flat/open-sheet
-   crossings the ray test can't see; 41 on the mech, unreviewed),
+   crossings the ray test can't see; 41 on the mech, unreviewed;
+   `pairs=N` ranks severity — foot-vs-foot cross-limb is the
+   suspicious class), `DISJOINT_KINEMATIC_SEAM` is gated by
+   `_islands_close` BVH nearest-distance (≥2 sampled verts within pad;
+   121→2 false-positive collapse on the mech),
    `PART_BONE_MISMATCH` (islands
    attributed via `stream/<asset>.partmap.json` — `__part_*` vgroups
    don't survive `.ydd` export).

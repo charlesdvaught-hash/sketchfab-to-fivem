@@ -1,0 +1,116 @@
+{
+  "report_metadata": {
+    "repository": "https://github.com/charlesdvaught-hash/sketchfab-to-fivem",
+    "phase": "Phase 6 — R-01 leg part_map splits + R-02/R-05 QA upgrades",
+    "scope": "work/rb_buster/override.json recipe iteration (2-way -> 3-way -> full per-member), tools/rigid_plate_qa.py scissor pair-counts + BVH seam proximity, tools/diagnose_trs.py quat-preferred PASS4",
+    "spec_version": "1.4.0 (unchanged — no new knobs; keyframe_max_stops/keyframe_tol_m already existed)",
+    "verification_gates": [
+      "python test_harness.py -> ALL CHECKS PASSED",
+      "tools/diagnose_trs.py on published sf_buster_drone (36 parts)",
+      "tools/rigid_plate_qa.py on sf_sf_military_mech.ydd",
+      "render_check assembly PNGs regenerated (buster_PHASE6_*_iso.png)"
+    ]
+  },
+  "recipe_final": {
+    "part_map": "each of leg_l/leg_r/leg_f split into 8 single-member parts (leg_x0..leg_x7 = P0..P7); proximal multi-member groups removed entirely",
+    "assembly_config": {"max_parts": 40, "keyframe_max_stops": 50},
+    "notes": [
+      "leg_f0/leg_f1/leg_f2 classify as spin (kf=0) — front-leg proximal members rotate in place; leg_l0/l1, leg_r0/l1 are 6-kf hinges",
+      "distal terminal links (P5/P6/P7 equivalents) hit the 50-stop RDP cap — they are the fast-whip members",
+      "WARN_NONRIGID_CHAIN no longer fires on legs (no multi-member leg groups remain); WARN_AUTO_SPIN_PART on leg_f0-2 is expected"
+    ]
+  },
+  "measurements": {
+    "buster_pass4": {
+      "exceeds_003_count": 0,
+      "worst_probe_m": 0.0214,
+      "prior_plateaus": {"phase4_unsplit": 0.25, "phase5_kabsch": 0.1015, "phase6_2way": 0.064, "phase6_3way_proximal": 0.027, "phase6_full_split_30stops": 0.0467, "phase6_full_split_50stops": 0.0214}
+    },
+    "buster_pass3b": "all 36 parts max_vertex_err <= 0.0001m",
+    "buster_pass3c": "vacuous for legs — zero multi-member leg groups remain; deployed per-member residual eliminated by construction",
+    "buster_parts": 36,
+    "buster_kf_range": "0 (spins) to 50 (distal whip links); proximal 6-26",
+    "mech_qa": {
+      "CLB": 0,
+      "FK_PENETRATION": 0,
+      "PART_BONE_MISMATCH": 0,
+      "FK_SCISSOR_CLIP": 41,
+      "DISJOINT_KINEMATIC_SEAM": 2,
+      "prior": {"seams_phase5": 121, "scissor_phase5": 41}
+    }
+  },
+  "key_findings": [
+    {
+      "id": "P6-F1",
+      "claim": "R-01 resolution required FULL per-member splits, not 2-way/3-way. Proximal 3-member groups still carried ~0.28m deployed per-member residual (PASS3C); even 2-member distal groups showed 0.45-0.62m interior centroid dev. Only single-member groups make PASS3c vacuous and PASS4 worst <=0.0214m.",
+      "evidence": "PASS4 worst progression 0.064 (2-way) -> 0.027 proximal-only (3-way) -> 0.0467 (per-member distal, 30 stops) -> 0.0214 (per-member all, 50 stops). PASS3c leg residuals 0.22-0.29m on proximal 3-member groups disappeared only after full split.",
+      "confidence": 0.99
+    },
+    {
+      "id": "P6-F2",
+      "claim": "Distal whip links are keyframe-starvation limited, not split limited. At keyframe_max_stops=5/12/30 the same distal parts (P5-P7) produced worst probes 0.257/0.173/0.047m; at 50 stops all probes <=0.0214m. They still hit the cap — convergence is marginal.",
+      "evidence": "leg_l7/leg_r7/leg_f7 all emitted exactly 50 keyframes; EXCEEDS count 86->17->0 across the three rebuilds.",
+      "confidence": 0.98
+    },
+    {
+      "id": "P6-F3",
+      "claim": "R-05 BVH seam filter is a 60x false-positive reduction with no loss of true positives: 121 -> 2 seams, both genuine sub-cm proximities (R_UpperArm vs Spine3 islands 503/504 vs 584, min surf dist 0.004/0.007m).",
+      "evidence": "tools/rigid_plate_qa.py _islands_close: >=2 of <=32 sampled verts within AABB-pad threshold via BVHTree.find_nearest; conservative AABB fallback when island lacks polys.",
+      "confidence": 0.97
+    },
+    {
+      "id": "P6-F4",
+      "claim": "R-02 pair counts rank the 41 scissor clips meaningfully: parent/child joint overlaps (calf->thigh, thigh->pelvis) carry pairs=1-16; foot-vs-foot cross-limb clips (islands 20/22 vs 761/762/764) carry pairs=1-5 and remain the suspicious class.",
+      "evidence": "FK_SCISSOR_CLIP lines now suffix pairs=N from BVHTree.overlap tri-tri count.",
+      "confidence": 0.95
+    },
+    {
+      "id": "P6-F5",
+      "claim": "PASS4 now prefers emitted chained 'quat' over euler 'rot' reconstruction. Measured zero delta on buster (euler roundtrip was already exact), but it removes a whole error class for >180deg swing hinges where euler branch-hopping could corrupt slerp.",
+      "evidence": "tools/diagnose_trs.py predict_pose: Quaternion(k['quat']) when all keyframes carry it.",
+      "confidence": 0.9
+    }
+  ],
+  "remaining_issues": [
+    {
+      "id": "P6-R1",
+      "severity": "MEDIUM",
+      "area": "qa interpretation / mech FK_SCISSOR_CLIP",
+      "issue": "41 scissor clips still unclassified. pairs= ranking now available; foot-vs-foot cross-limb clips (SKEL_L_Foot vs SKEL_R_Foot islands) are the suspicious subset — likely stance-width/rest-pose issue, not joint articulation.",
+      "suggested_fix": "Classify by bone-hop distance + laterality: adjacent-bone parent/child = design overlap (accept); cross-limb = review rest-pose foot placement. Optionally gate on pairs>=3."
+    },
+    {
+      "id": "P6-R2",
+      "severity": "LOW",
+      "area": "qa / DISJOINT_KINEMATIC_SEAM residual",
+      "issue": "2 remaining seams: islands 503/504 (SKEL_R_UpperArm) vs 584 (SKEL_Spine3), 2 bone-hops, min surf dist 0.004-0.007m — genuine near-contact across a real kinematic gap; likely a shoulder-pauldron floating 4-7mm off the spine plate.",
+      "suggested_fix": "Manual review of islands 503/504/584 in the mech source; probably weld or accept as armor gap."
+    },
+    {
+      "id": "P6-R3",
+      "severity": "LOW",
+      "area": "export / runtime cost",
+      "issue": "36 parts on buster (24 leg links alone) + up to 50 keyframes on whip links = larger manifest and more attach entities per tick. No consumer exists yet for sf_buster_drone (manifest-only prop), so cost is latent.",
+      "suggested_fix": "When a Lua/attach consumer lands, budget-check parts x keyframes; consider keyframe_max_stops per-part or topology-aware caps. Consider raising global default only if other assets show the same starvation."
+    },
+    {
+      "id": "P6-R4",
+      "severity": "LOW",
+      "area": "verification / visual parity",
+      "issue": "Render comparison vs REFERENCE_buster.jpg is evidence-only this phase: numeric gates (PASS3b=0, PASS4<=0.0214, PASS3c vacuous) are the verified signal; buster_PHASE6_*_iso.png regenerated for consultant review but no automated image diff exists.",
+      "suggested_fix": "Consultant/pixel review of the three PNGs vs testing/REFERENCE_buster.jpg; if leg silhouette gaps appear at deployed pose, the remaining error is in spin-classified leg_f0-2 (they rotate in place rather than translate — check whether front legs should hinge instead)."
+    },
+    {
+      "id": "P6-R5",
+      "severity": "INFO",
+      "area": "classification",
+      "issue": "leg_f0/leg_f1/leg_f2 auto-classified as spin (WARN_AUTO_SPIN_PART) — front-leg root/mid members rotate >300deg with <5cm travel. If the source intent was deployment translation, spin classification may be wrong; visually verify against reference.",
+      "suggested_fix": "Compare deployed render front-leg pose vs REFERENCE_buster.jpg; override spin->hinge in part_map dict form if needed."
+    }
+  ],
+  "docs": {
+    "recipe_location": "work/rb_buster/override.json (gitignored scratch — recipe recorded here and in testing/PHASE6_SPLITS.md)",
+    "evidence": ["testing/buster_PHASE6_folded_iso.png", "testing/buster_PHASE6_mid_iso.png", "testing/buster_PHASE6_deployed_iso.png"],
+    "prior_reports": ["testing/PHASE5_RESIDUALS.json"]
+  }
+}

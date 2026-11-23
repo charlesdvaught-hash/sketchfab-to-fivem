@@ -23,3 +23,12 @@ placement, or the source rest pose?
 - `military_mech_{000,045,090}.png` — mech source turntable (matches
   REFERENCE silhouette; published as rigid-bone ped, no render gate)
 - `REFERENCE_*.jpg` — official Sketchfab thumbnails for the three models
+
+## RESOLVED — double-rotation fix
+
+`buster_FIXED_*.png` are the same assembly renders after canonicalising
+part verts to pivot-local orientation (`blender_worker.py` parts loop:
+verts now `D @ B⁻¹ @ (v − hinge)`, emitted basis compensated by `D⁻¹`
+for `rest_rot`). Folded pose now matches REFERENCE_buster.jpg.
+Root cause: verts carried baked world rotation W0 while the manifest
+also emitted W0 as folded/initial_rot -> applied twice.

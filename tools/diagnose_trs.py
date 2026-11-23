@@ -252,6 +252,7 @@ for part in man.get("parts", []):
 # chamfer (nearest-vertex) otherwise / as a scramble check.
 print("\n=== PASS 3b: MAX-VERTEX MANIFEST RECONSTRUCTION AT f_start ===")
 import numpy as np
+src_at_start = {}
 for part in man.get("parts", []):
     model = part["model"]
     cverts = read_ydr_xml_verts(model)
@@ -265,6 +266,7 @@ for part in man.get("parts", []):
     step = max(1, len(cverts) // 800)
     pred = np.array([[*(off + R_man @ v)] for v in cverts[::step]])
     tv = np.array([[*v] for v in true])
+    src_at_start[model] = true
     idx_err = None
     if len(cverts) == len(true):
         full_pred = np.array([[*(off + R_man @ v)] for v in cverts])
@@ -285,9 +287,6 @@ f_end = man.get("frame_window", {}).get("end_frame", f_start)
 f_mid = (f_start + f_end) // 2
 t_mid = (f_mid - f_start) / (f_end - f_start) if f_end > f_start else 0.0
 if f_end > f_start:
-    bpy.context.scene.frame_set(f_mid)
-    bpy.context.view_layer.update()
-    dg_mid = bpy.context.evaluated_depsgraph_get()
     print(
         f"\n=== PASS 4: MANIFEST-LERP vs TRUE SOURCE @ frame {f_mid} "
         f"(t={t_mid:.4f}) ===")
@@ -297,6 +296,10 @@ if f_end > f_start:
         if not dep_off or not dep_rot:
             continue
         members = part.get("source_objects") or []
+        # depsgraph tracks scene state -- re-fetch fresh per frame_set
+        bpy.context.scene.frame_set(f_mid)
+        bpy.context.view_layer.update()
+        dg_mid = bpy.context.evaluated_depsgraph_get()
         true_mid = normalize_src(eval_world_verts(members, dg_mid))
         cverts = read_ydr_xml_verts(part["model"])
         if not true_mid or not cverts:
@@ -317,3 +320,19 @@ if f_end > f_start:
             if delta > 0.03 else ""
         print(f"  MIDPOSE_DELTA {part['model']} ({part.get('kind')}): "
               f"{delta:.4f}m{flag}")
+        # where is the source REALLY at f_mid? near folded endpoint (delayed
+        # timing), near deployed (early), or off-chord (arc sag)?
+        # NOTE: a depsgraph tracks scene state -- re-fetch per frame_set.
+        bpy.context.scene.frame_set(f_end)
+        bpy.context.view_layer.update()
+        dg_e = bpy.context.evaluated_depsgraph_get()
+        true_e = normalize_src(eval_world_verts(members, dg_e))
+        true_f = src_at_start.get(model)
+        if true_f and true_e:
+            cf = sum(true_f, Vector()) / len(true_f)
+            ce = sum(true_e, Vector()) / len(true_e)
+            print(f"      pred_mid={tuple(round(x,3) for x in pred)} "
+                  f"true_mid={tuple(round(x,3) for x in c_true)}")
+            print(f"      |true_mid - folded|={(c_true-cf).length:.3f}m "
+                  f"|true_mid - deployed|={(c_true-ce).length:.3f}m "
+                  f"|folded - deployed|={(ce-cf).length:.3f}m")

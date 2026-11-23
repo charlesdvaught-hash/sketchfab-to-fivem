@@ -69,13 +69,16 @@ def decompose_rigid_islands(mesh_obj, arm_obj):
                     q.append(nb)
         dom_bone = max(bone_counts, key=bone_counts.get) if bone_counts else None
         dom_part = max(part_counts, key=part_counts.get) if part_counts else None
+        n_bones = len(bone_counts)
         pts = [mesh_obj.matrix_world @ Vector(keys[i]) for i in comp]
         centroid = sum(pts, Vector()) / len(pts)
         islands.append({
             "id": len(islands),
             "verts": comp,
             "bone": dom_bone,
+            "n_bones": n_bones,
             "part": dom_part,
+            "pts": pts,
             "centroid": centroid,
             "mins": Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
             "maxs": Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))),
@@ -112,16 +115,22 @@ def attribute_islands(islands, partmap_path, pad_m=0.01):
             mn, mx = p["mins"], p["maxs"]
             if all(mn[k] - pad_m <= c[k] <= mx[k] + pad_m
                    for k in range(3)):
-                hits.append(((Vector(p["centroid"]) - c).length, name, p))
+                contained_all = all(
+                    mn[k] - pad_m <= isl["mins"][k]
+                    and isl["maxs"][k] <= mx[k] + pad_m
+                    for k in range(3))
+                hits.append(((Vector(p["centroid"]) - c).length,
+                             name, p, contained_all))
         contained = bool(hits)
         if not hits:
-            hits = [((Vector(p["centroid"]) - c).length, name, p)
+            hits = [((Vector(p["centroid"]) - c).length, name, p, False)
                     for name, p in parts.items()]
         if not hits:
             continue
         hits.sort(key=lambda h: h[0])
-        _d, name, p = hits[0]
+        _d, name, p, contained_all = hits[0]
         isl["part" if contained else "part_guess"] = name
+        isl["part_inside"] = bool(contained and contained_all)
         isl["part_lock"] = p.get("assigned_bone") or p.get("bone_lock")
 
 def bone_hop_distance(arm_obj, b1, b2):
@@ -168,8 +177,13 @@ def audit_rigid_plate_map(mesh_obj, arm_obj, islands=None, pad_m=0.025):
                     f"CROSS_LATERAL_BIND: Island {isl['id']} at x={isl['centroid'].x:.3f} "
                     f"bound to opposite-side bone {bn} (bone x={bx:.3f})"
                     + _part_tag(isl))
-        # exported dominant bone disagrees with the part's assigned lock
-        if isl.get("part_lock") and isl["part_lock"] != bn:
+        # exported dominant bone disagrees with the attributed part's lock.
+        # Only meaningful on PURE single-bone islands with a containment
+        # attribution -- boundary islands mix verts from neighbouring parts
+        # (a calf-bbox island can legitimately be dominated by foot verts).
+        if (isl.get("part") and isl.get("part_lock") and isl["n_bones"] == 1
+                and isl.get("part_inside") and len(isl["verts"]) >= 50
+                and isl["part_lock"] != bn):
             anomalies.append(
                 f"PART_BONE_MISMATCH: Island {isl['id']} dominant bone {bn} "
                 f"but its part expects {isl['part_lock']}" + _part_tag(isl))
@@ -203,6 +217,21 @@ def _isl_box(isl, delta=None):
 
 def _overlap(a, b):
     return all(a[0][k] <= b[1][k] and a[1][k] >= b[0][k] for k in range(3))
+
+
+def _overlap_depth(a, b):
+    """Min-axis penetration depth of two AABBs, or 0 if disjoint. AABBs of
+    angled plates massively over-report contact -- a grazing corner overlap
+    of a few mm is not a penetration."""
+    if not _overlap(a, b):
+        return 0.0
+    return min(min(a[1][k], b[1][k]) - max(a[0][k], b[0][k])
+               for k in range(3))
+
+
+def _verts_in_box(pts, box):
+    return sum(1 for p in pts
+               if all(box[0][k] <= p[k] <= box[1][k] for k in range(3)))
 
 
 def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
@@ -251,11 +280,18 @@ def fk_sweep_penetration(mesh_obj, arm_obj, islands, angle_deg=25.0):
             bpy.context.view_layer.update()
             delta = armw @ pb.matrix @ pb.bone.matrix_local.inverted() @ armw_inv
             for i in moved:
+                # sample the island's verts moved by the bone delta; an
+                # AABB-vs-AABB test flags empty-corner overlaps, so require
+                # real vert containment inside the target's rest box.
+                src_pts = islands[i]["pts"]
+                step = max(1, len(src_pts) // 64)
+                moved_pts = [delta @ p for p in src_pts[::step]]
                 box_i = _isl_box(islands[i], delta)
                 for j in range(len(islands)):
                     if j in moved or rest_touch[i][j]:
                         continue
-                    if _overlap(box_i, rest_boxes[j]):
+                    if _overlap_depth(box_i, rest_boxes[j]) > 0.02 and \
+                            _verts_in_box(moved_pts, rest_boxes[j]) >= 3:
                         anomalies.append(
                             f"FK_PENETRATION: bone {bn} {sgn*angle_deg:+.0f}deg "
                             f"moves island {islands[i]['id']} ({islands[i]['bone']}) "

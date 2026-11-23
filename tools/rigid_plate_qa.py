@@ -50,30 +50,79 @@ def decompose_rigid_islands(mesh_obj, arm_obj):
         visited[vi] = True
         comp = []
         bone_counts = {}
+        part_counts = {}
         while q:
             cur = q.popleft()
             comp.append(cur)
             for vi2 in weld[keys[cur]]:
                 for g in me.vertices[vi2].groups:
-                    if g.weight > 0.5 and g.group in vg_names:
-                        bn = vg_names[g.group]
-                        bone_counts[bn] = bone_counts.get(bn, 0) + 1
+                    if g.group not in vg_names:
+                        continue
+                    gn = vg_names[g.group]
+                    if gn.startswith("__part_"):
+                        part_counts[gn[7:]] = part_counts.get(gn[7:], 0) + 1
+                    elif g.weight > 0.5:
+                        bone_counts[gn] = bone_counts.get(gn, 0) + 1
             for nb in adj[cur]:
                 if not visited[nb]:
                     visited[nb] = True
                     q.append(nb)
         dom_bone = max(bone_counts, key=bone_counts.get) if bone_counts else None
+        dom_part = max(part_counts, key=part_counts.get) if part_counts else None
         pts = [mesh_obj.matrix_world @ Vector(keys[i]) for i in comp]
         centroid = sum(pts, Vector()) / len(pts)
         islands.append({
             "id": len(islands),
             "verts": comp,
             "bone": dom_bone,
+            "part": dom_part,
             "centroid": centroid,
             "mins": Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
             "maxs": Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))),
         })
     return islands
+
+def _find_partmap(src):
+    """<asset>.partmap.json next to the .ydd -- pre-join part centroids/
+    bboxes written by blender_worker (non-bone __part_* vgroups do NOT
+    survive Sollumz .ydd export)."""
+    base = src
+    for suf in (".ydd.xml", ".ydd"):
+        if base.endswith(suf):
+            base = base[:-len(suf)]
+    cand = base + ".partmap.json"
+    return cand if os.path.isfile(cand) else None
+
+def attribute_islands(islands, partmap_path, pad_m=0.01):
+    """Assign each welded island a source part: first by padded-bbox
+    containment of the island centroid, tie-broken/fallen-back to nearest
+    part centroid. Marks confidence: 'part' = contained, 'part_guess' =
+    nearest only."""
+    import json
+    parts = (json.load(open(partmap_path)).get("parts")
+             if partmap_path else None)
+    if not parts:
+        return
+    for isl in islands:
+        if isl.get("part"):
+            continue  # __part_* vgroup survived (in-Blender QA use)
+        c = isl["centroid"]
+        hits = []
+        for name, p in parts.items():
+            mn, mx = p["mins"], p["maxs"]
+            if all(mn[k] - pad_m <= c[k] <= mx[k] + pad_m
+                   for k in range(3)):
+                hits.append(((Vector(p["centroid"]) - c).length, name, p))
+        contained = bool(hits)
+        if not hits:
+            hits = [((Vector(p["centroid"]) - c).length, name, p)
+                    for name, p in parts.items()]
+        if not hits:
+            continue
+        hits.sort(key=lambda h: h[0])
+        _d, name, p = hits[0]
+        isl["part" if contained else "part_guess"] = name
+        isl["part_lock"] = p.get("assigned_bone") or p.get("bone_lock")
 
 def bone_hop_distance(arm_obj, b1, b2):
     if b1 == b2:
@@ -93,8 +142,17 @@ def bone_hop_distance(arm_obj, b1, b2):
         cur, d = cur.parent, d + 1
     return 999
 
-def audit_rigid_plate_map(mesh_obj, arm_obj, pad_m=0.025):
-    islands = decompose_rigid_islands(mesh_obj, arm_obj)
+def _part_tag(isl):
+    if isl.get("part"):
+        return f" [part={isl['part']}]"
+    if isl.get("part_guess"):
+        return f" [part~{isl['part_guess']}]"
+    return ""
+
+
+def audit_rigid_plate_map(mesh_obj, arm_obj, islands=None, pad_m=0.025):
+    if islands is None:
+        islands = decompose_rigid_islands(mesh_obj, arm_obj)
     anomalies = []
     # Check 1: L/R lateral sign vs assigned SKEL_L_ / SKEL_R_ bone
     for isl in islands:
@@ -108,7 +166,13 @@ def audit_rigid_plate_map(mesh_obj, arm_obj, pad_m=0.025):
             if (isl["centroid"].x * bx) < 0:
                 anomalies.append(
                     f"CROSS_LATERAL_BIND: Island {isl['id']} at x={isl['centroid'].x:.3f} "
-                    f"bound to opposite-side bone {bn} (bone x={bx:.3f})")
+                    f"bound to opposite-side bone {bn} (bone x={bx:.3f})"
+                    + _part_tag(isl))
+        # exported dominant bone disagrees with the part's assigned lock
+        if isl.get("part_lock") and isl["part_lock"] != bn:
+            anomalies.append(
+                f"PART_BONE_MISMATCH: Island {isl['id']} dominant bone {bn} "
+                f"but its part expects {isl['part_lock']}" + _part_tag(isl))
 
     # Check 2: Virtual Seam Adjacency vs Skeleton Tree Hop Count
     for i in range(len(islands)):
@@ -219,12 +283,18 @@ def main():
         sys.exit(1)
     print(f"[rigid_qa] mesh={mesh.name} armature={arm.name} "
           f"bones={len(arm.data.bones)}")
-    islands, anomalies = audit_rigid_plate_map(mesh, arm)
+    islands = decompose_rigid_islands(mesh, arm)
+    pm = _find_partmap(src)
+    if pm:
+        attribute_islands(islands, pm)
+        print(f"[rigid_qa] partmap: {os.path.basename(pm)}")
+    islands, anomalies = audit_rigid_plate_map(mesh, arm, islands)
     print(f"[rigid_qa] {len(islands)} rigid islands")
     for isl in islands:
         pure = isl["bone"] is not None
         print(f"  island {isl['id']:3d}: {len(isl['verts']):6d} verts "
               f"-> {isl['bone'] or 'UNMAPPED'}"
+              + _part_tag(isl)
               + ("" if pure else "  <-- PURITY FAIL"))
     anomalies += fk_sweep_penetration(mesh, arm, islands)
     print(f"[rigid_qa] {len(anomalies)} anomalies")

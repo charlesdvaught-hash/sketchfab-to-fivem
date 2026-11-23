@@ -359,8 +359,11 @@ if os.path.isdir(SRC):
                           (part.get("deployed_rot")
                            or part.get("folded_rot")
                            or part.get("initial_rot") or (0, 0, 0))]
-                    rot = Euler(r0, 'YXZ').to_quaternion().slerp(
-                        Euler(r1, 'YXZ').to_quaternion(), f).to_euler('YXZ')
+                    q0 = Euler(r0, 'YXZ').to_quaternion()
+                    q1 = Euler(r1, 'YXZ').to_quaternion()
+                    if q0.dot(q1) < 0.0:  # hemisphere continuity
+                        q1.negate()
+                    rot = q0.slerp(q1, f).to_euler('YXZ')
                 if off is None:
                     continue
                 objs = load_model(model)

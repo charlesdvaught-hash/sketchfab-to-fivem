@@ -379,13 +379,62 @@ def fix_mesh_attributes(obj):
                     uvl.remove(tgt)
                     donor.name = name0
                     warn(f"WARN_UV_RESCUE_EMPTY:{obj.name}")
+            lyr = uvl.get(name0)
+            if lyr is not None:
+                if donor is None and _uv_layer_is_empty(lyr):
+                    warn(f"WARN_UV_EMPTY_NORESCUE:{obj.name}")
+                lyr.active = True
+                if hasattr(lyr, "active_render"):
+                    lyr.active_render = True
+            for mat in obj.data.materials:
+                nt = getattr(mat, "node_tree", None)
+                if nt is None:
+                    continue
+                for n in nt.nodes:
+                    if (n.bl_idname == "ShaderNodeUVMap"
+                            and (not n.uv_map or n.uv_map not in uvl)):
+                        n.uv_map = name0
     except Exception as exc:
         warn(f"WARN_UV_FALLBACK_FAILED:{obj.name}:{exc}")
+    # Same contract for vertex colors: the exporter looks up layers by
+    # get_color_attr_name (2.9: "Color 1", 1-indexed -- NOT "Color 0").
+    # glTF imports name them "COLOR_0"/"Col"; a missing channel can render
+    # dark in-game, so rescue donors and init a neutral white layer.
+    try:
+        get_cname = getattr(meshhelper, "get_color_attr_name", None)
+        cname0 = get_cname(0) if get_cname else "Color 1"
+        attrs = obj.data.color_attributes
+        tgt = attrs.get(cname0)
+        donor = next((a for a in attrs if a is not tgt), None)
+        if donor is not None:
+            if tgt is None:
+                donor.name = cname0
+                warn(f"WARN_COLOR_RENAME_FALLBACK:{obj.name}")
+            elif _color_attr_is_empty(tgt) and \
+                    not _color_attr_is_empty(donor):
+                attrs.remove(tgt)
+                donor.name = cname0
+                warn(f"WARN_COLOR_RESCUE_EMPTY:{obj.name}")
+        if donor is None and (tgt is None or _color_attr_is_empty(tgt)):
+            ca = tgt if tgt is not None else attrs.new(
+                name=cname0, type='BYTE_COLOR', domain='CORNER')
+            flat = np.full(len(ca.data) * 4, 1.0, dtype=np.float32)
+            ca.data.foreach_set('color_srgb', flat)
+            warn(f"WARN_COLOR_INIT_NEUTRAL:{obj.name}")
+    except Exception as exc:
+        warn(f"WARN_COLOR_FALLBACK_FAILED:{obj.name}:{exc}")
 
 
 def _uv_layer_is_empty(layer):
     for d in layer.data[:256]:
         if abs(d.uv.x) > 1e-9 or abs(d.uv.y) > 1e-9:
+            return False
+    return True
+
+
+def _color_attr_is_empty(attr):
+    for d in attr.data[:256]:
+        if max(abs(d.color[i]) for i in range(4)) > 1e-6:
             return False
     return True
 
@@ -921,6 +970,7 @@ def resolve_clip_playback(mc):
                     ad.action = act
                     for t in ad.nla_tracks:
                         t.mute = True
+                        t.is_solo = False
                     print("[worker] auto-activated single clip:",
                           o.name, "->", act.name)
             elif len(names) > 1:
@@ -937,6 +987,7 @@ def resolve_clip_playback(mc):
                         ad.action = act
                         for t in ad.nla_tracks:
                             t.mute = True
+                            t.is_solo = False
                         print("[worker] self-matched clip:", o.name,
                               "->", act.name)
                         continue
@@ -964,11 +1015,13 @@ def resolve_clip_playback(mc):
             ad.action = None
             for t in ad.nla_tracks:
                 t.mute = True
+                t.is_solo = False
             continue
         hit_any = True
         kept = [a for a in cand if a.name in keep_names]
         ad.action = kept[0]
         for t in ad.nla_tracks:
+            t.is_solo = False
             t.mute = all(s.action is None or s.action.name not in keep_names
                          for s in t.strips)
         print("[worker] keep_actions:", o.name, "->", kept[0].name)
@@ -1579,6 +1632,10 @@ def motion_multi_part(job, mc):
     for o in all_objs:
         o.data.transform(N)
         o.data.update()
+    # bound_box caches stale pre-transform bounds until a depsgraph pass —
+    # without this, body_off is measured in raw space and applied to
+    # normalized verts (buster floated +1.315 m).
+    bpy.context.view_layer.update()
 
     if body_names:
         mode = sidecar.get("pivot_mode", "bottom_center")
@@ -1687,7 +1744,9 @@ def motion_multi_part(job, mc):
                       "(body grounded at 0,0,0). Part .ydr verts are\n"
                       "canonicalised into pivot-local orientation, so\n"
                       "folded_rot/initial_rot are ABSOLUTE bases (apply\n"
-                      "once), not additive deltas.\n"
+                      "once), not additive deltas. When interpolating via\n"
+                      "quaternions, hemisphere-normalize first (flip q1 if\n"
+                      "dot(q0,q1)<0) or slerp takes the 360-deg long path.\n"
                       "Usage: attach each part to the body entity at\n"
                       "attach_offset with folded_rot/initial_rot. kind=hinge:\n"
                       "interpolate offset->deployed_offset + rot->deployed_rot\n"
@@ -2730,6 +2789,32 @@ def process_ped_recipe(job, recipe):
         d = bone_dists(np.array([pt]))[0]
         return bnames[int(d.argmin())]
 
+    # Lateral midline + left/right X sign derived from the ARMATURE rest
+    # pose (do NOT hardcode +X=L / -X=R -- a mirrored donor flips it).
+    # Canonical GTA peds put L thigh at +X, but read it instead.
+    _lx = H[bidx["SKEL_L_Thigh"]][0] if "SKEL_L_Thigh" in bidx else None
+    _rx = H[bidx["SKEL_R_Thigh"]][0] if "SKEL_R_Thigh" in bidx else None
+    if _lx is not None and _rx is not None:
+        mid_x = 0.5 * (_lx + _rx)
+        left_sign = 1.0 if _lx > _rx else -1.0
+    else:
+        mid_x, left_sign = 0.0, 1.0  # GTA convention fallback
+
+    # Pre-join part extents -> <asset>.partmap.json sidecar so QA can map
+    # welded islands back to source parts (object names die in the join).
+    partmap = {}
+    for o, rp in kept:
+        co = verts_co(o)  # (3,nv) world
+        src = o.name[len("baked_"):]
+        partmap[src] = {
+            "centroid": [round(float(v), 6) for v in co.mean(1)],
+            "mins": [round(float(v), 6) for v in co.min(1)],
+            "maxs": [round(float(v), 6) for v in co.max(1)],
+            "role": (rp or {}).get("role") or "smooth",
+            "bone_lock": (rp or {}).get("bone_lock"),
+        }
+    job["_ped_partmap"] = partmap
+
     # join smooth into one mesh BEFORE weighting
     base = None
     if smooth:
@@ -2781,7 +2866,31 @@ def process_ped_recipe(job, recipe):
         lock = (rp or {}).get("bone_lock") or ""
         if lock not in bidx:
             co = verts_co(o)
-            lock = nearest_bone(co.mean(1))
+            cen = co.mean(1)
+            xmin, xmax = float(co[0].min()), float(co[0].max())
+            d = bone_dists(np.array([cen]))[0]
+            cand = list(range(len(bnames)))
+            axial = [i for i in cand
+                     if '_L_' not in bnames[i] and '_R_' not in bnames[i]]
+            if xmin < mid_x - 0.015 and xmax > mid_x + 0.015:
+                # bbox straddles the midline -> axial, NEVER a thigh
+                # (a thigh lock drags the far-side verts into the seam)
+                lock = ("SKEL_Pelvis" if "SKEL_Pelvis" in bidx
+                        else bnames[min(axial or cand,
+                                        key=lambda i: d[i])])
+            elif abs(cen[0] - mid_x) > 0.015:
+                # lateral island: forbid bones named for the OTHER side
+                is_left = (cen[0] - mid_x) * left_sign > 0
+                bad = '_R_' if is_left else '_L_'
+                same = [i for i in cand if bad not in bnames[i]]
+                cand = same or cand
+                lock = bnames[min(cand, key=lambda i: d[i])]
+            else:  # inside the midline band -> prefer axial bones
+                cand = axial or cand
+                lock = bnames[min(cand, key=lambda i: d[i])]
+        src = o.name[len("baked_"):] if o.name.startswith("baked_") else o.name
+        if src in partmap:
+            partmap[src]["assigned_bone"] = lock
         o.vertex_groups.new(name=lock).add(
             list(range(len(o.data.vertices))), 1.0, 'REPLACE')
 
@@ -2871,6 +2980,12 @@ def ped_export_finalize(job, arm, ms):
         export_ytds=txd_name is not None,
         export_ytds_include="ALL",
     )
+
+    partmap = job.get("_ped_partmap")
+    if partmap:
+        pm_path = os.path.join(stream_dir, asset_name + ".partmap.json")
+        with open(pm_path, "w", encoding="utf-8") as f:
+            json.dump({"asset": asset_name, "parts": partmap}, f, indent=1)
 
     ydd_files = [os.path.join(dp, f)
                  for dp, _dn, fs in os.walk(stream_dir) for f in fs

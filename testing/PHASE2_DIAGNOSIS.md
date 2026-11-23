@@ -113,3 +113,34 @@ static renders, will visibly shear when the leg animates. Recipe
 | `mech_PED_iso.png` | correct silhouette + dark olive atlas; bone-map defect flagged separately by rigid_plate_qa |
 
 `test_harness.py`: ALL CHECKS PASSED.
+
+## Format for external findings
+
+External reviewers are welcome to debug the pipeline however they like —
+read source, run it, write throwaway harnesses. **But deliverables should
+be a single dense `.json` report, not a reimplementation of the
+pipeline** (no apps, workbenches, or ported converters). Shape:
+
+```json
+{
+  "reviewer": "name",
+  "pipeline_commit": "sha or date",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "bug|warn|info",
+      "area": "transforms|uv|textures|rig|manifest|gates|preview",
+      "claim": "one-sentence defect statement",
+      "evidence": "measured value / code ref / file+line",
+      "source_lines": ["blender_worker.py:1597"],
+      "repro": "asset + steps, or 'code inspection'",
+      "suggested_fix": "concise patch description",
+      "confidence": "measured|code-verified|hypothesis"
+    }
+  ],
+  "open_questions": ["..."],
+  "artifacts_checked": ["sf_sf_buster_drone2", "..."]
+}
+```
+
+Verified findings get implemented + credited; hypotheses get tested.

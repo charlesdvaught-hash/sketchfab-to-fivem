@@ -138,6 +138,9 @@ python dashboard.py                               # http://127.0.0.1:8420
 | `apparel_pack` | false | Requires `apparel_config`; emits `fullDlc^comp` layout + shop meta + subdir_file_mapping manifest |
 | `apparel_config` | null | `{"ped":"mp_m_freemode_01","dlc":"mydlc","components":[{"component":"jbib","index":0,"textures":1}]}` — **one component per job** |
 | `motion_config` | `{}` | See MOTION_SPEC.md (`keep_actions`, `part_map` list/dict, `assembly_config`) |
+| `assembly_config.keyframe_mode` | `"adaptive"` | Hinge manifest stops: `adaptive` = SE(3) RDP over the sampled driver trajectory; `uniform` = 5-stop grid 0/.25/.5/.75/1; `off` = legacy 2-pose manifest (no `keyframes`) |
+| `assembly_config.keyframe_tol_m` | `0.02` | Adaptive stop target: split intervals until max canonical-vertex error ≤ this |
+| `assembly_config.keyframe_max_stops` | `5` | Hard cap on emitted keyframe stops per hinge part |
 | `rig_recipe` | null | Workbench recipe (`{parts, preview_transform, user_transform, anim_capture}`) — overrides `part_map`; roles → co-moving clusters, `trash` deletes parts, same-role multi-clusters export as `<asset>_<role>_<idx>`. See `reference/RIG_WORKBENCH.md` |
 | `exclude_objects` | `[]` | fnmatch patterns on object names — matched objects + subtrees dropped (Sketchfab display bases/env junk) |
 | `license` / `source_url` / `attribution` | null | Provenance → build_report + registry |

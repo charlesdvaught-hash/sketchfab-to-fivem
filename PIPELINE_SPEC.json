@@ -1,7 +1,7 @@
 {
-  "spec_version": "1.2.0",
+  "spec_version": "1.3.0",
   "project_name": "sketchfab_to_qbox_prop_pipeline",
-  "objective": "Fully headless, zero-GUI pipeline that ingests Sketchfab 3D archives/files, normalizes geometry/materials/collisions, converts to GTA V (.ydr/.ytyp props, .ydd skinned drawable dictionaries) via Sollumz in Blender background mode, and outputs ready-to-ensure FiveM Qbox resources. v1.1.0 adds ped_clothing, generation-aware export, apparel-pack layout, toolchain probing, hardened archive/input validation, and the external-converter exclusion policy.",
+  "objective": "Fully headless, zero-GUI pipeline that ingests Sketchfab 3D archives/files, normalizes geometry/materials/collisions, converts to GTA V (.ydr/.ytyp props, .ydd skinned drawable dictionaries) via Sollumz in Blender background mode, and outputs ready-to-ensure FiveM Qbox resources. v1.1.0 adds ped_clothing, generation-aware export, apparel-pack layout, toolchain probing, hardened archive/input validation, and the external-converter exclusion policy. v1.3.0 adds adaptive RDP manifest keyframes for hinge parts, piecewise lerp+slerp consumers, carrier-relative PASS4 probes, and BVH-enclosure rigid-QA penetration.",
   "hard_constraints": [
     "NEVER open Blender GUI or prompt for manual user intervention during asset processing.",
     "ALL Blender operations MUST run via `blender --background --factory-startup --python-exit-code 1 --python <worker_script> -- <args>` with Sollumz explicitly enabled in code each run.",
@@ -71,7 +71,7 @@
       "collision_mode": "enum [box, convex_hull, mesh_decimated, none] (default convex_hull; ped forces none)",
       "max_triangles": "int (default 35000)",
       "max_texture_res": "int (default 2048)",
-      "motion_config": "object (default {}; fields incl. keep_actions, part_map list|dict values + reserved '_body' label, assembly_config {max_parts, spin_min_deg, spin_name_patterns, spin_max_travel_m, spin_tail_min_dpf, part_collision} — see MOTION_SPEC.md)",
+      "motion_config": "object (default {}; fields incl. keep_actions, part_map list|dict values + reserved '_body' label, assembly_config {max_parts, spin_min_deg, spin_name_patterns, spin_max_travel_m, spin_tail_min_dpf, part_collision, keyframe_mode, keyframe_tol_m, keyframe_max_stops} — see MOTION_SPEC.md)",
       "exclude_objects": "list of fnmatch patterns on object names (default []; matched objects + subtrees dropped after import, all modes)",
       "texture_mode": "enum [embed, ytd] (default embed)",
       "lod_dist": "float (default 150.0)",
@@ -149,7 +149,7 @@
         "kind resolution: explicit kind wins; else auto-spin requires ALL of (a) one-directional signed cumulative rotation >= spin_min_deg (default 300), (b) still turning at window end (tail rate >= spin_tail_min_dpf default 0.1deg/frame), (c) hub evidence: name matches spin_name_patterns OR carrier-relative travel <= spin_max_travel_m (default 0.05). Passing a+b but failing c or settling -> hinge + WARN_HIGH_ROTATION_HINGE; dict spin params imply spin; else hinge. <300deg own-origin rotations stay hinge.",
         "part_map '_body' label pins animated members into the carrier; deployed poses are carrier-relativized via the carrier's world delta (WARN_CARRIER_MOTION_RELATIVIZED) -- no-op on static bodies.",
         "kind=spin -> <name>_propNN, manifest carries attach_offset (hub = point on recovered axis nearest centroid), initial_rot, spin_axis, spin_rpm (derived from cumulative revs/window seconds) -- never folded/deployed_rot. Static spin part requires explicit spin_axis+spin_rpm else ERR_SPIN_AXIS_UNRESOLVED / ERR_SPIN_RPM_UNRESOLVED.",
-        "kind=hinge -> <name>_partNN, manifest carries attach_offset, deployed_offset, folded_rot, deployed_rot (YXZ_deg project convention).",
+        "kind=hinge -> <name>_partNN, manifest carries attach_offset, deployed_offset, folded_rot, deployed_rot (YXZ_deg project convention) + keyframes[{t,pos,rot}] — adaptive SE(3) RDP stops over the sampled driver trajectory (carrier-relative W_rel(k)=ref(0)@ref(k)^-1@W(k); D_rot^-1 compensation slerp-ramped to I across t so endpoints stay bit-identical to folded/deployed_rot). keyframe_mode: adaptive (default, split at max vertex error until <=keyframe_tol_m 0.02 or keyframe_max_stops 5) | uniform (0/.25/.5/.75/1) | off (legacy 2-pose). Vertex error measured on <=128 canonical verts incl. the 6 axis-extremes. Consumers interpolate piecewise lerp+slerp with SEQUENTIAL hemisphere chaining (dot(q[i-1],q[i])<0 -> negate).",
         "Collision: _body keeps collision_mode; all other targets export part_collision (default none) -- thin blades never carry collision.",
         "Clip playback: single-clip muted NLA auto-activates per object; multi-clip objects stay muted + WARN_AMBIGUOUS_ACTIONS; motion_config.keep_actions substrings select a clip-set (no match -> ERR_KEEP_ACTIONS_NO_MATCH).",
         "exclude_objects (fnmatch on object names) removes matched objects + subtrees after import in every mode."

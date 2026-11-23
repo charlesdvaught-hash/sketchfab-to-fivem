@@ -157,6 +157,31 @@ if body_names and pivot_mode != "keep_origin":
 def normalize_src(verts):
     return [N_mat @ v + body_off for v in verts]
 
+
+# Carrier-relative frame: the manifest stores part trajectories in the
+# body's f_start frame (W_rel = ref0 @ ref_k^-1 @ W_k, generalizing
+# D_b_inv @ W1). PASS4 must relativize TRUE source verts the same way or
+# mid-clip carrier motion reads as phantom part error.
+_mc = sidecar.get("motion_config") or {}
+_pm = _mc.get("part_map") or {}
+_body_spec = _pm.get("_body") or []
+forced_order = (list(_body_spec.get("meshes") or [])
+                if isinstance(_body_spec, dict) else list(_body_spec))
+ref_name = forced_order[0] if forced_order else \
+    (body_names[0] if body_names else None)
+ref_obj = (bpy.context.scene.objects.get(ref_name)
+           if ref_name else None)
+ref0_mw = ref_obj.matrix_world.copy() if ref_obj is not None else None
+
+
+def carrier_rel(dg_now):
+    """C_k: maps world-at-frame-k into the carrier's f_start frame."""
+    if ref_obj is None:
+        return Matrix.Identity(4)
+    refk = ref_obj.evaluated_get(dg_now).matrix_world
+    return ref0_mw @ refk.inverted()
+
+
 print("=== PASS 1: RAW/MUTED (--dump-preview) vs ACTIVE CLIP AT f_start ===")
 for o in bpy.context.scene.objects:
     if o.type != 'MESH':
@@ -343,7 +368,10 @@ if f_end > f_start:
             bpy.context.scene.frame_set(fr)
             bpy.context.view_layer.update()
             dg_f = bpy.context.evaluated_depsgraph_get()
-            true_f = normalize_src(eval_world_verts(members, dg_f))
+            Ck = carrier_rel(dg_f)
+            true_f = normalize_src([Ck @ v
+                                    for v in eval_world_verts(members,
+                                                              dg_f)])
             if not true_f:
                 continue
             off_p, R_p = predict_pose(part, t_a)
@@ -360,7 +388,10 @@ if f_end > f_start:
             bpy.context.scene.frame_set(f_end)
             bpy.context.view_layer.update()
             dg_e = bpy.context.evaluated_depsgraph_get()
-            true_e = normalize_src(eval_world_verts(members, dg_e))
+            Ce = carrier_rel(dg_e)
+            true_e = normalize_src([Ce @ v
+                                    for v in eval_world_verts(members,
+                                                              dg_e)])
             true_fold = src_at_start.get(part["model"])
             if true_fold and true_e:
                 cf = sum(true_fold, Vector()) / len(true_fold)

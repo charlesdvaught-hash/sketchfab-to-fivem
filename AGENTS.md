@@ -2,7 +2,7 @@
 
 Headless Sketchfab → FiveM prop converter for the CliffordWon server. **Zero
 Python dependencies (stdlib only), zero network calls** except the optional
-Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.1.0). Motion modes:
+Sketchfab API. Spec of record: `PIPELINE_SPEC.json` (v1.3.0). Motion modes:
 `MOTION_SPEC.md`. `README.md` is the living file map; `REVIEW_BUNDLE.md` is a
 frozen snapshot — don't edit it.
 
@@ -18,7 +18,7 @@ frozen snapshot — don't edit it.
 | `autorig_check.py` | host | Auto-rig donor-wrap verification |
 | `dashboard.py` | host | Web UI on `:8420` — see UI section below |
 | `test_harness.py` | host | E2E regression suite — run after worker/orchestrator changes |
-| `tools/diagnose_trs.py` | inside Blender | Post-publish TRS diagnostic on a shipped resource — PASS1 (muted/active NLA), PASS2 (.ydr part-center offset), PASS3 (lever-arm), PASS3b (indexed/chamfer max-vertex manifest reconstruction), PASS4 (mid-pose lerp vs true source frame) |
+| `tools/diagnose_trs.py` | inside Blender | Post-publish TRS diagnostic on a shipped resource — PASS1 (muted/active NLA), PASS2 (.ydr part-center offset), PASS3 (lever-arm), PASS3b (indexed/chamfer max-vertex manifest reconstruction), PASS4 (interior probes between every manifest keyframe stop + fixed sweep, piecewise-predicted vs carrier-relative true source) |
 | `tools/rigid_plate_qa.py` | inside Blender | Welded-island audit on ped `.ydd`s — `CROSS_LATERAL_BIND`, `DISJOINT_KINEMATIC_SEAM` (>1-hop), `FK_PENETRATION`, `PART_BONE_MISMATCH`; island→part attribution via `stream/<asset>.partmap.json` |
 | `bin/texconv.exe` | — | Vendored PNG→DDS converter |
 | `vendor/` | — | Vendored CSS kits (see UI section) |
@@ -227,7 +227,8 @@ python orchestrator.py --file model.glb
 
 1. `python test_harness.py` — must print `ALL CHECKS PASSED`.
 2. `tools/diagnose_trs.py <res_dir>` — PASS1/2/3 ≈0; PASS3b max-vertex ≈0;
-   PASS4 = the known 2-pose-lerp gap (see MOTION_SPEC.md).
+   PASS4 interior probes ≤0.015 m on single-member hinges (~0.25 m plateau =
+   multi-member non-rigid joins, split via part_map — see MOTION_SPEC.md).
 3. `tools/rigid_plate_qa.py <path/to.ydd>` — weld verts first; flags
    `CROSS_LATERAL_BIND`, `DISJOINT_KINEMATIC_SEAM` (>1-hop only — 1-hop is a
    legitimate joint), `FK_PENETRATION`, `PART_BONE_MISMATCH` (via partmap).

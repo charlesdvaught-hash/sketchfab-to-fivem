@@ -108,3 +108,22 @@ Round 3 of external review (Argon). Fixes + measured results are in
   (quantized keyframes vs `parent_part` hierarchy) is in MOTION_SPEC.md.
 - Plus: hemisphere-slerp guard, NLA `is_solo` clear, `Color 1`
   attribute rescue (1-indexed — not `Color 0`), wider UV retarget.
+
+## Phase 4 — adaptive manifest keyframes (`PHASE4_KEYFRAMES.md`)
+
+- **Argon Option (c) implemented**: hinge parts emit
+  `keyframes[{t,pos,rot}]` — adaptive SE(3) RDP stops (tol 0.02 m, cap 5;
+  `keyframe_mode`: adaptive/uniform/off). Buster's stops cluster at
+  t≈0.22–0.30 — the real deploy phase; spin/static parts get none.
+- **D4-ramped basis**: `rest_rot` compensation slerps to identity across
+  `t` — endpoints stay bit-identical to `folded_rot`/`deployed_rot`.
+- **PASS4 is now tautology-proof**: probes between every adjacent stop +
+  fixed sweep. Buster single-member hinges: **≤0.015 m** (was 1.75–2.13 m).
+- **PASS4 tool fix**: true verts now carrier-relativized (`ref0@refk⁻¹`)
+  — mid-clip carrier motion was phantom error.
+- **Leg caveat**: 8-member chains plateau ~0.25 m — independently-animated
+  segments can't live in one rigid `.ydr`; split via `part_map`.
+- **All `bound_box` reads → vert min/max** (F-04; also fixes a latent
+  snapshot-mode stale-bounds site).
+- **FK_PENETRATION 54→0** via BVHTree 2-of-3-axis ray enclosure (F-05) —
+  all prior hits were open-shell false positives.

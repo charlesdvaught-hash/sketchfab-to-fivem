@@ -40,6 +40,10 @@ docs elsewhere describe other versions.
   (unmute strips+tracks, clear `is_solo` — a soloed track suppresses the
   active action — set `ad.action`) AND `scene.frame_set(f_start)` to
   match the compile pose. Muted-pose measurements ≠ compile-pose.
+- `obj.bound_box` is a **lazy RNA cache** — NOT invalidated after
+  `mesh.data.transform()` / vertex mutation until a depsgraph pass.
+  All bounds reads use `vertices.foreach_get('co')` min/max + 8-corner
+  `matrix_world` transform (F-04: two separate stale-bounds bugs found).
 
 ## Contract A transform math (our choice — do not mix with Contract B)
 
@@ -56,11 +60,22 @@ docs elsewhere describe other versions.
 
 ## Manifest consumer contract
 
-- Hemisphere-normalize before slerp: `dot(q0,q1) < 0 → negate q1`.
-  `Euler.to_quaternion()` can yield antipodal pairs → long-path spin.
-- Mid-pose renders are lerp+slerp = what FiveM's 2-pose interpolator
-  draws, NOT source ground truth. Blind spots: chord-vs-arc sag
-  (≈0.293·L at t=0.5 for 90° parent arcs) and staggered sub-clip timing.
+- **Sequential** hemisphere-normalize for multi-stop tracks: for `i>0`,
+  `dot(q[i-1],q[i]) < 0 → negate q[i]` — chaining per adjacent step keeps
+  cumulative >180° tracks on the short path; anchoring to `q[0]` snaps
+  the tail. The RDP evaluator applies the same rule per candidate
+  interval, not just on the emitted list.
+- Hinge parts carry `keyframes[{t,pos,rot}]` — adaptive SE(3) RDP stops
+  (`keyframe_mode`: adaptive/uniform/off; `keyframe_tol_m`, 
+  `keyframe_max_stops`). Interpolate piecewise: bracket `t` in
+  `[t_i,t_{i+1}]`, lerp `pos`, slerp `rot` at local alpha. `keyframes[0]`
+  ≡ folded, `keyframes[-1]` ≡ deployed (the `rest_rot`/`D_rot⁻¹`
+  compensation is slerp-ramped to identity across t so both ends match
+  the legacy fields bit-for-bit). Absent `keyframes` → 2-pose fallback.
+- Mid-pose renders draw the piecewise path; `keyframes` stops are exact
+  source poses in manifest space — only inter-stop interpolation is
+  approximate. Joined parts with independently-animated members (buster
+  legs, 8 segs/part) plateau ~0.25 m — split them in `part_map`.
 
 ## QA gates — run order after any transform/export change
 
@@ -69,17 +84,19 @@ docs elsewhere describe other versions.
    NLA divergence ≈0, PASS2 `.ydr` part centers ≈0 (<0.05 m),
    PASS3 lever-arm swing ≈0, PASS3b indexed/chamfer max-vertex
    manifest-vs-source reconstruction ≈0 (0.0000 m on buster = Contract A
-   exact), PASS4 mid-pose manifest-lerp vs true source frame (nonzero =
-   the known 2-pose gap — staggered sub-clip timing, ~2 m on buster
-   hinges; documented in MOTION_SPEC.md).
+   exact), PASS4 interior probes — midpoints between every adjacent
+   keyframe stop + fixed sweep, piecewise-predicted vs carrier-relative
+   TRUE source (≤0.015 m on buster single-member hinges; ~0.25 m plateau
+   on multi-member leg chains = non-rigid join limit, not interp error).
 3. `tools/rigid_plate_qa.py` on ped `.ydd` — **weld verts first** (raw
    `.ydd` split normals = 1 island/face); flags: `CROSS_LATERAL_BIND`
    (±x geometry on contralateral `SKEL_L/R_*` = real defect),
    `DISJOINT_KINEMATIC_SEAM` (welded edge, bones >1 hop apart — 1 hop is
-   a legitimate joint, do NOT flag), FK penetration (vert-containment,
-   not AABB grazing), `PART_BONE_MISMATCH` (islands attributed via
-   `stream/<asset>.partmap.json` — `__part_*` vgroups don't survive
-   `.ydd` export).
+   a legitimate joint, do NOT flag), FK penetration (**BVHTree 2-of-3-axis
+   bidirectional ray enclosure** on welded island faces — open C-shells
+   can't false-positive; 54→0 on the mech), `PART_BONE_MISMATCH` (islands
+   attributed via `stream/<asset>.partmap.json` — `__part_*` vgroups
+   don't survive `.ydd` export).
 4. Assembly renders vs `testing/REFERENCE_*.jpg` Sketchfab thumbs.
 - `WARN_PART_PIVOT_OFFSET` (>0.15 m `.ydr` bbox-center) = pivot bug.
 - `WARN_RENDER_CHECK` is advisory only; `render_check` must only appear
@@ -89,7 +106,8 @@ docs elsewhere describe other versions.
 
 `AGENTS.md` (file map + skills table) · `reference/RAGE_SOLLUMZ_CONTRACTS.md` ·
 `reference/RIG_WORKBENCH.md` (workbench data contract) ·
-`testing/PHASE2_DIAGNOSIS.md` + `testing/PHASE3_RESULTS.md` (audit history +
+`testing/PHASE2_DIAGNOSIS.md` + `testing/PHASE3_RESULTS.md` +
+`testing/PHASE4_KEYFRAMES.md` (audit history +
 measured results + evidence links).
 
 ## Installed reference packs (sibling skills, MIT)

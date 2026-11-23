@@ -82,7 +82,11 @@ The worker samples the scene **per frame** across the window (capped ~600
 samples). Each part is one of two kinds:
 
 - **hinge** — a part that changes pose between folded and deployed.
-  Manifest: `attach_offset`, `deployed_offset`, `folded_rot`, `deployed_rot`.
+  Manifest: `attach_offset`, `deployed_offset`, `folded_rot`, `deployed_rot`,
+  plus `keyframes` — an array of `{t, pos, rot}` stops over `t ∈ [0,1]`
+  selected by **adaptive SE(3) RDP** to track the sampled driver trajectory
+  (default; see "Keyframe stops" below). `keyframes[0]` ≡ folded pose and
+  `keyframes[-1]` ≡ deployed pose bit-for-bit.
 - **spin** (G2 — rotors/propellers/fans) — a part that rotates continuously
   on a hub for the whole window. Manifest: `attach_offset` (the hub — the
   point on the recovered spin axis nearest the part's centroid),
@@ -132,6 +136,47 @@ NLA clip are auto-activated (parallel per-object clips). Objects carrying
 several distinct clips stay muted and log `WARN_AMBIGUOUS_ACTIONS` —
 `keep_actions` selects a clip-set explicitly.
 
+### Keyframe stops (Phase 4 — adaptive RDP)
+
+Every hinge part samples its **driver trajectory** at every frame of the
+window — the driving object's `matrix_world`, or the driving bone's
+`arm.matrix_world @ pose_bone.matrix` when the member is armature-deformed —
+and relativizes it into the carrier's f_start frame:
+`W_rel(k) = ref(0) @ ref(k)^-1 @ W(k)`. Exact per-sample manifest poses are
+then:
+
+- position: `pos(k) = hinge_n + N₃₃ @ (W_rel(k).translation − hinge)`
+  (`hinge_n`/`hinge` per the pivot rule above — reduces to `N @ t + body_off`);
+- basis: `R_basis(k) = R @ W_rel(k) @ slerp(D_rot⁻¹ → I, t_k)` — the
+  `rest_rot` compensation **ramps** across `t` so `t=0` yields `folded_rot`
+  and `t=1` yields `deployed_rot` bit-for-bit while the trajectory stays
+  continuous (a hard `D_rot⁻¹` drop at the last stop would be an
+  irreducible step RDP wastes stops chasing; with `rest_rot` absent the
+  ramp is the identity).
+
+Stops are then chosen by greedy SE(3) Ramer–Douglas–Peucker over the ≤600
+samples: start `[0, last]`, split the worst-error interval at the argmax
+frame, repeat until max vertex error ≤ `keyframe_tol_m` (default `0.02`)
+or `keyframe_max_stops` (default `5`) is reached. Error is measured on a
+≤128-vert canonical subsample: uniform stride **plus the 6 axis-extreme
+verts** so tip rotation error is always in the set. `keyframe_mode` in
+`assembly_config`: `"adaptive"` (default), `"uniform"` (stops at
+0/.25/.5/.75/1 — Argon's option (a) fallback grid), `"off"` (legacy
+2-pose manifest). Spin parts, static-driver groups and non-hinge entries
+carry no `keyframes`.
+
+Linear-translation parts terminate at 2 stops automatically; buster's
+hinges clustered 3 interior stops inside `t ≈ 0.22–0.30` (the actual
+deploy phase) and left the settled tail on one interval — the adaptive
+behavior is exactly where option (a)'s uniform grid was blind.
+
+**Multi-member caveat**: a joined part is baked rigid at f_start. If its
+members carry *independent* curves (buster's 8-segment leg chains), no
+single-driver rigid track can represent them — mid-clip member verts
+diverge (measured ≤0.38 m per segment, ~0.25 m on the joined centroid).
+Fix granularity in `part_map`: give each independently-animated member
+its own part entry (each gets its own keyframe track).
+
 Emits `<name>_body.ydr` + `<name>_partNN.ydr` + `<name>_propNN.ydr` and
 `assembly_manifest.lua`:
 
@@ -149,7 +194,12 @@ return {
       attach_offset   = {x,y,z},        -- body-local folded hinge pos
       deployed_offset = {x,y,z},        -- body-local deployed hinge pos
       folded_rot  = {x,y,z},            -- degrees, YXZ_deg convention
-      deployed_rot= {x,y,z} },
+      deployed_rot= {x,y,z},
+      keyframes = {                     -- adaptive RDP stops (see below)
+        { t = 0.0,    pos = {x,y,z}, rot = {x,y,z} },   -- == folded pose
+        { t = 0.2217, pos = {x,y,z}, rot = {x,y,z} },   -- interior stops...
+        { t = 1.0,    pos = {x,y,z}, rot = {x,y,z} },   -- == deployed pose
+      } },
     { kind = "spin", model = "<name>_prop01", source_objects = {...},
       attach_offset = {x,y,z},          -- body-local hub point (on axis)
       initial_rot   = {x,y,z},
@@ -182,16 +232,25 @@ and no FXServer runtime validation has been performed (`runtime_validation =
   `initial_rot` all share one frame; the part verts already carry `rest_rot`
   baked into canonicalization (Contract A — see `RAGE_SOLLUMZ_CONTRACTS.md`).
   Do NOT compose `rest_rot` onto manifest rotations.
-- **Hemisphere-normalize before slerp**: `dot(q0,q1) < 0 → negate q1`.
-  `Euler.to_quaternion()` can emit antipodal pairs → long-path spin otherwise.
-- **Mid-pose is a lerp, not ground truth.** Between the two declared poses a
-  consumer draws lerp+slerp — that is what `_assembly_mid_*` renders show. The
-  source clip can deviate: PASS4 measured 1.75–2.13 m mid-frame error on
-  buster's hinge parts (one is already 98% deployed at t=0.5; the other
-  overshoots the endpoint ~0.67 m and settles back — staggered sub-clip
-  timing a 2-pose manifest cannot express). Open design question for future
-  spec versions: quantized intermediate keyframes (e.g. 5 stops at
-  0/.25/.5/.75/1) vs a `parent_part` hierarchy.
+- **Hemisphere-normalize SEQUENTIALLY**: for `i>0`, `dot(q[i-1],q[i]) < 0
+  → negate q[i]` — chain each quaternion against its predecessor, never
+  anchor to `q[0]`. A cumulative track past 180° legitimately has
+  `dot(q[0],q[i]) < 0` at the tail; anchoring flips the tail into a
+  360° snap. (`render_check.py` and `diagnose_trs.py` implement the chain;
+  the same rule applies inside each candidate RDP interval.)
+- **Interpolate `keyframes` piecewise**: bracket `t` in `[t_i, t_{i+1}]`,
+  local `alpha = (t − t_i)/(t_{i+1} − t_i)`, lerp `pos`, slerp `rot`.
+  Absent `keyframes` (spin parts, `keyframe_mode="off"`, older manifests)
+  fall back to `attach_offset → deployed_offset` + folded→deployed slerp
+  over `transition_ms`.
+- **Mid-pose accuracy is now measured, not assumed.** `_assembly_mid_*`
+  renders draw the piecewise path. PASS4 (interior probes between every
+  adjacent stop + fixed sweep) on buster: ≤0.015 m on all single-member
+  hinges (was 1.75–2.13 m at t=0.5 on the 2-pose path); 8-member leg
+  chains sit at ~0.25 m because their segments carry independent curves —
+  a part-map granularity limit, not interpolation error (see caveat
+  above). `runtime_status` remains `manifest_only_requires_consumer` —
+  no FXServer runtime validation has been performed.
 
 ## `ped_clothing` (method 3 — skinned)
 
